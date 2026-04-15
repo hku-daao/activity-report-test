@@ -26,7 +26,8 @@ export type ActivityReportRow = {
   team_filter: string
   attending_staff_ids: unknown
   other_people_enabled: boolean
-  other_people_names: string[] | null
+  /** Postgres `text[]`; may deserialize oddly — use `parseOtherPeopleNamesFromRow`. */
+  other_people_names: unknown
   other_party_name: string | null
   crm_constituent_no: string | null
   event_at: string | null
@@ -123,7 +124,7 @@ function isoToDatetimeLocal(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function parseAttendingIds(raw: unknown): (string | number)[] {
+export function parseAttendingIds(raw: unknown): (string | number)[] {
   if (Array.isArray(raw)) {
     return raw.map((x) => (typeof x === 'number' ? x : String(x)))
   }
@@ -138,22 +139,46 @@ function parseAttendingIds(raw: unknown): (string | number)[] {
   return []
 }
 
+/** Normalizes other_people_names from DB (array, or occasional string/JSON). */
+export function parseOtherPeopleNamesFromRow(
+  row: ActivityReportRow,
+): string[] {
+  const raw = row.other_people_names
+  if (raw == null) return []
+  if (Array.isArray(raw)) {
+    return raw.map((x) => String(x).trim()).filter(Boolean)
+  }
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown
+      if (Array.isArray(p)) {
+        return p.map((x) => String(x).trim()).filter(Boolean)
+      }
+    } catch {
+      const t = raw.trim()
+      return t ? [t] : []
+    }
+    const plain = raw.trim()
+    return plain ? [plain] : []
+  }
+  return []
+}
+
 export function activityRowToFormState(row: ActivityReportRow): ActivityReportFormState {
   const dm = Math.max(0, Number(row.duration_minutes) || 0)
   const hours = Math.floor(dm / 60)
   const minutes = dm % 60
   const teamFilter =
     row.team_filter === 'all' ? '__all__' : String(row.team_filter)
+  const otherNames = parseOtherPeopleNamesFromRow(row)
 
   return {
     title: row.title?.trim() ?? '',
     teamFilter,
     attendingStaffIds: parseAttendingIds(row.attending_staff_ids),
-    otherPeopleEnabled: Boolean(row.other_people_enabled),
-    otherPeopleNames:
-      row.other_people_names && row.other_people_names.length > 0
-        ? [...row.other_people_names]
-        : [''],
+    otherPeopleEnabled:
+      Boolean(row.other_people_enabled) || otherNames.length > 0,
+    otherPeopleNames: otherNames.length > 0 ? otherNames : [''],
     otherPartyName: row.other_party_name ?? '',
     crmConstituentNo: row.crm_constituent_no ?? '',
     eventDateTime: isoToDatetimeLocal(row.event_at),
@@ -500,17 +525,11 @@ export async function submitActivityReportToSupabase(
   return { ok: true }
 }
 
-export function reportMatchesTeamSelection(
+export function reportMatchesSearch(
   row: ActivityReportRow,
-  selectedTeamIds: 'all' | string[],
+  q: string,
+  creatorFullName?: string | null,
 ): boolean {
-  if (selectedTeamIds === 'all') return true
-  if (selectedTeamIds.length === 0) return false
-  if (row.team_filter === 'all') return true
-  return selectedTeamIds.some((t) => String(t) === String(row.team_filter))
-}
-
-export function reportMatchesSearch(row: ActivityReportRow, q: string): boolean {
   const s = q.trim().toLowerCase()
   if (!s) return true
   const hay = [
@@ -518,6 +537,7 @@ export function reportMatchesSearch(row: ActivityReportRow, q: string): boolean 
     row.detail,
     row.other_party_name,
     row.crm_constituent_no,
+    creatorFullName,
     ...(row.attachment_urls ?? []),
   ]
     .filter(Boolean)

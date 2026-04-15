@@ -4,11 +4,14 @@ import { Link } from 'react-router-dom'
 import {
   fetchActivityReportsForUids,
   reportMatchesSearch,
-  reportMatchesTeamSelection,
   resolveViewerFirebaseUids,
   type ActivityReportRow,
 } from '../lib/activityReports'
-import { fetchTeamsAlphabetical } from '../lib/teamsAndStaff'
+import {
+  fetchCreatorDirectoryByFirebaseUids,
+  fetchTeamsAlphabetical,
+  reportMatchesCreatorTeamFilter,
+} from '../lib/teamsAndStaff'
 import type { StaffRow, TeamRow } from '../lib/staffAccess'
 
 type Props = {
@@ -34,6 +37,13 @@ function isDeleted(row: ActivityReportRow): boolean {
 export function ActivityReportsDashboard({ user, subordinates }: Props) {
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [rows, setRows] = useState<ActivityReportRow[]>([])
+  const [creatorTeamByUid, setCreatorTeamByUid] = useState<
+    Map<string, string[]>
+  >(() => new Map())
+  const [creatorFullNameByUid, setCreatorFullNameByUid] = useState<
+    Map<string, string>
+  >(() => new Map())
+  const [creatorInfoLoaded, setCreatorInfoLoaded] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -88,6 +98,27 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
     }
   }, [user, subEmails])
 
+  useEffect(() => {
+    let cancelled = false
+    const uids = [...new Set(rows.map((r) => r.firebase_uid))]
+    if (uids.length === 0) {
+      setCreatorTeamByUid(new Map())
+      setCreatorFullNameByUid(new Map())
+      setCreatorInfoLoaded(true)
+      return
+    }
+    setCreatorInfoLoaded(false)
+    void fetchCreatorDirectoryByFirebaseUids(uids).then((d) => {
+      if (cancelled) return
+      setCreatorTeamByUid(d.teamIdsByUid)
+      setCreatorFullNameByUid(d.fullNameByUid)
+      setCreatorInfoLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [rows])
+
   const teamSelectionParam = useMemo((): 'all' | string[] => {
     if (teams.length === 0) return 'all'
     if (selectedTeamIds.length === teams.length) return 'all'
@@ -97,11 +128,33 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
       if (!showDeleted && isDeleted(row)) return false
-      if (!reportMatchesTeamSelection(row, teamSelectionParam)) return false
-      if (!reportMatchesSearch(row, search)) return false
+      if (
+        !reportMatchesCreatorTeamFilter(
+          creatorTeamByUid.get(row.firebase_uid),
+          teamSelectionParam,
+        )
+      ) {
+        return false
+      }
+      if (
+        !reportMatchesSearch(
+          row,
+          search,
+          creatorFullNameByUid.get(row.firebase_uid) ?? null,
+        )
+      ) {
+        return false
+      }
       return true
     })
-  }, [rows, teamSelectionParam, search, showDeleted])
+  }, [
+    rows,
+    creatorTeamByUid,
+    creatorFullNameByUid,
+    teamSelectionParam,
+    search,
+    showDeleted,
+  ])
 
   const toggleTeam = (teamId: string) => {
     setSelectedTeamIds((prev) => {
@@ -145,7 +198,12 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
 
       <div className="activity-dashboard-controls">
         <label className="activity-dashboard-field">
-          <span className="activity-label">Teams</span>
+          <span
+            className="activity-label"
+            title="Filter by the team of the person who created the report (from staff directory), not the team chosen on the form."
+          >
+            Creator’s team
+          </span>
           <div className="activity-team-multiselect">
             <button
               type="button"
@@ -178,7 +236,7 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
           <input
             type="search"
             className="activity-input"
-            placeholder="Search title, detail, party, CRM…"
+            placeholder="Search title, detail, creator name, party, CRM…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             autoComplete="off"
@@ -219,11 +277,14 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
                   </span>
                   <span className="activity-report-meta">
                     {formatWhen(row.created_at)}
-                    {row.firebase_uid === user.uid ? (
-                      <span className="activity-report-owner"> · Yours</span>
-                    ) : (
-                      <span className="activity-report-owner"> · Team member</span>
-                    )}
+                    <span className="activity-report-owner">
+                      {' '}
+                      ·{' '}
+                      {creatorInfoLoaded
+                        ? creatorFullNameByUid.get(row.firebase_uid) ??
+                          'Unknown creator'
+                        : '…'}
+                    </span>
                   </span>
                 </Link>
               </li>

@@ -6,11 +6,14 @@ import { auth } from '../lib/firebase'
 import {
   activityRowToFormState,
   fetchActivityReportById,
+  parseAttendingIds,
+  parseOtherPeopleNamesFromRow,
   resolveViewerFirebaseUids,
   softDeleteActivityReport,
   type ActivityReportRow,
 } from '../lib/activityReports'
-import { loadStaffDashboard } from '../lib/staffAccess'
+import { loadStaffDashboard, staffFullName, type StaffRow } from '../lib/staffAccess'
+import { fetchAllStaff } from '../lib/teamsAndStaff'
 
 type Props = {
   user: User
@@ -39,6 +42,7 @@ export function ActivityReportViewPage({ user }: Props) {
     | { status: 'forbidden' }
   >({ status: 'loading' })
   const [deleting, setDeleting] = useState(false)
+  const [staffList, setStaffList] = useState<StaffRow[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -89,6 +93,23 @@ export function ActivityReportViewPage({ user }: Props) {
       cancelled = true
     }
   }, [id, user])
+
+  const reportId = state.status === 'ready' ? state.row.id : null
+
+  useEffect(() => {
+    if (!reportId) {
+      setStaffList(null)
+      return
+    }
+    let cancelled = false
+    void fetchAllStaff().then((res) => {
+      if (cancelled) return
+      setStaffList(res.ok ? res.staff : [])
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reportId])
 
   const handleLogout = () => {
     if (firebaseAuth) void signOut(firebaseAuth)
@@ -161,6 +182,7 @@ export function ActivityReportViewPage({ user }: Props) {
   }
 
   const form = activityRowToFormState(row)
+  const otherPeopleFromRow = parseOtherPeopleNamesFromRow(row)
   const statusLabel =
     row.status === 'submitted' ? 'Submitted' : 'Unsubmitted'
   const statusBadgeClass = isSoftDeleted
@@ -222,17 +244,24 @@ export function ActivityReportViewPage({ user }: Props) {
             <dd>{form.title.trim() || '—'}</dd>
           </div>
           <div className="activity-view-row">
-            <dt>Who is also attending (staff ids)</dt>
+            <dt>Who is attending</dt>
             <dd>
-              {formatAttendingIds(row.attending_staff_ids)}
-            </dd>
-          </div>
-          <div className="activity-view-row">
-            <dt>Team scope</dt>
-            <dd>
-              {form.teamFilter === '__all__'
-                ? 'All teams'
-                : String(form.teamFilter)}
+              <div className="activity-view-attending-stack">
+                <p className="activity-view-attending-line">
+                  {formatAttendingStaffLabels(row.attending_staff_ids, staffList)}
+                </p>
+                {row.other_people_enabled ||
+                otherPeopleFromRow.length > 0 ? (
+                  <div className="activity-view-other-people-under-attending">
+                    <p className="activity-view-other-people-label">Other people</p>
+                    <p className="activity-view-attending-line">
+                      {otherPeopleFromRow.length > 0
+                        ? otherPeopleFromRow.join(', ')
+                        : '—'}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
             </dd>
           </div>
           <div className="activity-view-row">
@@ -257,17 +286,6 @@ export function ActivityReportViewPage({ user }: Props) {
             <dt>Detail</dt>
             <dd className="activity-view-detail">{form.detail || '—'}</dd>
           </div>
-          {form.otherPeopleEnabled && form.otherPeopleNames.some((n) => n.trim()) ? (
-            <div className="activity-view-row">
-              <dt>Other people</dt>
-              <dd>
-                {form.otherPeopleNames
-                  .map((n) => n.trim())
-                  .filter(Boolean)
-                  .join(', ') || '—'}
-              </dd>
-            </div>
-          ) : null}
           <div className="activity-view-row">
             <dt>Attachment links</dt>
             <dd>
@@ -295,9 +313,19 @@ export function ActivityReportViewPage({ user }: Props) {
   )
 }
 
-function formatAttendingIds(raw: unknown): string {
-  if (Array.isArray(raw) && raw.length > 0) {
-    return raw.map((x) => String(x)).join(', ')
+function formatAttendingStaffLabels(
+  raw: unknown,
+  staffList: StaffRow[] | null,
+): string {
+  const ids = parseAttendingIds(raw)
+  if (ids.length === 0) return '—'
+  if (!staffList || staffList.length === 0) {
+    return ids.map((x) => String(x)).join(', ')
   }
-  return '—'
+  return ids
+    .map((id) => {
+      const s = staffList.find((x) => String(x.id) === String(id))
+      return s ? staffFullName(s) : String(id)
+    })
+    .join(', ')
 }

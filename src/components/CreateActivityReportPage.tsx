@@ -19,7 +19,7 @@ import {
 } from '../lib/activityReports'
 import {
   loadStaffDashboard,
-  staffDisplayName,
+  staffFullName,
   type StaffRow,
   type TeamRow,
 } from '../lib/staffAccess'
@@ -157,6 +157,16 @@ export function CreateActivityReportPage({ user }: Props) {
           teamFilter: defaultTeamFilterValue(userTeams, tr.teams),
         }
       }
+      if (
+        !editReportId &&
+        next.attendingStaffIds.length === 0 &&
+        dash.data.staff
+      ) {
+        next = {
+          ...next,
+          attendingStaffIds: [dash.data.staff.id],
+        }
+      }
       setForm(next)
       setFormReady(true)
       setGate('ready')
@@ -167,15 +177,20 @@ export function CreateActivityReportPage({ user }: Props) {
     }
   }, [email, user.uid, editReportId])
 
+  /** Includes the logged-in staff member; they are listed first. */
   const visibleStaff = useMemo(() => {
     if (!myStaff) return []
-    return filterStaffByTeam(allStaff, form.teamFilter, myStaff.id)
+    const inTeam = filterStaffByTeam(allStaff, form.teamFilter, null)
+    const me = inTeam.find((s) => String(s.id) === String(myStaff.id))
+    const others = inTeam.filter((s) => String(s.id) !== String(myStaff.id))
+    if (me) return [me, ...others]
+    return inTeam
   }, [allStaff, form.teamFilter, myStaff])
 
   useEffect(() => {
     if (!formReady || !myStaff) return
     setForm((f) => {
-      const filtered = filterStaffByTeam(allStaff, f.teamFilter, myStaff.id)
+      const filtered = filterStaffByTeam(allStaff, f.teamFilter, null)
       const allowed = new Set(filtered.map((s) => String(s.id)))
       const attending = f.attendingStaffIds.filter((id) =>
         allowed.has(String(id)),
@@ -395,10 +410,12 @@ export function CreateActivityReportPage({ user }: Props) {
         </label>
 
         <fieldset className="activity-fieldset">
-          <legend className="activity-label">Who is also attending:</legend>
+          <legend className="activity-label">Who is attending</legend>
           <div className="activity-checkbox-list" role="group">
             {visibleStaff.length === 0 ? (
-              <p className="activity-muted">No other staff in this selection.</p>
+              <p className="activity-muted">
+                No staff match this team selection.
+              </p>
             ) : (
               visibleStaff.map((s) => {
                 const checked = form.attendingStaffIds.some(
@@ -412,7 +429,7 @@ export function CreateActivityReportPage({ user }: Props) {
                       onChange={() => toggleAttending(s.id)}
                     />
                     <span>
-                      {staffDisplayName(s)}
+                      {staffFullName(s)}
                       {s.email ? (
                         <span className="activity-muted"> ({s.email})</span>
                       ) : null}

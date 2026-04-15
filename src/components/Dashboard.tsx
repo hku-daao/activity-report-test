@@ -8,7 +8,7 @@ import { isProfilesSupabaseConfigured } from '../lib/profilesSupabase'
 import { syncUserProfile } from '../lib/profile'
 import {
   loadStaffDashboard,
-  staffDisplayName,
+  staffFullName,
   type StaffDashboard,
   type StaffRow,
 } from '../lib/staffAccess'
@@ -169,7 +169,7 @@ function ProfileContent({
   email: string
 }) {
   const { staff, team } = data
-  const name = staffDisplayName(staff)
+  const name = staffFullName(staff)
   const directorLabel = formatDirector(staff.director)
 
   return (

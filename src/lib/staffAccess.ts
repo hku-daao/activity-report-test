@@ -192,3 +192,12 @@ async function buildDashboard(
 export function staffDisplayName(s: StaffRow): string {
   return displayLabel(s)
 }
+
+/** `name` field (full name); falls back to display name then email. For attending lists. */
+export function staffFullName(s: StaffRow): string {
+  const n = s.name?.trim()
+  if (n) return n
+  const d = s.display_name?.trim()
+  if (d) return d
+  return s.email ?? 'Unknown'
+}
