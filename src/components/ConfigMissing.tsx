@@ -15,8 +15,16 @@ export function ConfigMissing() {
           Web app config.
         </li>
         <li>
-          <strong>Supabase:</strong> Project → Settings → API → Project URL and
-          anon public key.
+          <strong>Access list Supabase:</strong>{' '}
+          <code>VITE_ACCESS_SUPABASE_URL</code> and{' '}
+          <code>VITE_ACCESS_SUPABASE_ANON_KEY</code> — tables{' '}
+          <code>staff</code>, <code>team</code>, <code>subordinate</code>.
+        </li>
+        <li>
+          <strong>Profiles Supabase:</strong>{' '}
+          <code>VITE_PROFILES_SUPABASE_URL</code> and{' '}
+          <code>VITE_PROFILES_SUPABASE_ANON_KEY</code> — table{' '}
+          <code>profiles</code> (Firebase UID sync).
         </li>
       </ul>
     </div>

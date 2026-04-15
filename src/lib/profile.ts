@@ -1,15 +1,37 @@
 import type { User } from 'firebase/auth'
-import { supabase } from './supabase'
+import { profilesSupabase } from './profilesSupabase'
 
-/** Upserts a row keyed by Firebase UID. Requires the `profiles` table in Supabase. */
+/** Returns distinct Firebase UIDs for the given emails (profiles table). */
+export async function fetchFirebaseUidsForEmails(
+  emails: string[],
+): Promise<string[]> {
+  if (!profilesSupabase || emails.length === 0) return []
+  const unique = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))]
+  if (unique.length === 0) return []
+
+  const { data, error } = await profilesSupabase
+    .from('profiles')
+    .select('firebase_uid')
+    .in('email', unique)
+
+  if (error || !data) {
+    return []
+  }
+  const uids = data
+    .map((r: { firebase_uid: string }) => r.firebase_uid)
+    .filter(Boolean)
+  return [...new Set(uids)]
+}
+
+/** Upserts a row keyed by Firebase UID. Requires the `profiles` table in the profiles Supabase project. */
 export async function syncUserProfile(
   user: User,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!supabase) {
-    return { ok: false, error: 'Supabase is not configured' }
+  if (!profilesSupabase) {
+    return { ok: false, error: 'Profiles Supabase is not configured' }
   }
 
-  const { error } = await supabase.from('profiles').upsert(
+  const { error } = await profilesSupabase.from('profiles').upsert(
     {
       firebase_uid: user.uid,
       email: user.email ?? '',

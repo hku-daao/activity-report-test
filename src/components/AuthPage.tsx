@@ -61,7 +61,8 @@ export function AuthPage() {
       <header className="auth-header">
         <h1 className="auth-title">Activity Report</h1>
         <p className="auth-subtitle">
-          Sign in with Firebase. Your data lives in Supabase.
+          Sign in with Firebase. Access is verified against your Supabase staff
+          list.
         </p>
       </header>
 
