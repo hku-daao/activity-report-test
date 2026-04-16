@@ -297,10 +297,19 @@ export function ActivityReportViewPage({ user }: Props) {
                     .map((u) => u.trim())
                     .filter(Boolean)
                     .map((u) => (
-                      <li key={u}>
+                      <li key={u} className="activity-view-link-row">
                         <a href={u} target="_blank" rel="noreferrer">
                           {u}
                         </a>
+                        <button
+                          type="button"
+                          className="activity-go-link-btn"
+                          onClick={() => {
+                            window.open(u, '_blank', 'noopener,noreferrer')
+                          }}
+                        >
+                          Go to link
+                        </button>
                       </li>
                     ))}
                 </ul>

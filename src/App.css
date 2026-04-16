@@ -351,6 +351,34 @@
   word-break: break-all;
 }
 
+.activity-view-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 6px;
+}
+
+.activity-view-link-row:last-child {
+  margin-bottom: 0;
+}
+
+.activity-go-link-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.activity-go-link-btn:hover {
+  border-color: var(--accent-border);
+}
+
 .activity-form-page .dashboard-topbar {
   flex-wrap: wrap;
 }

@@ -92,6 +92,12 @@ export function saveDraftRowIdToStorage(uid: string, id: string | null): void {
   else localStorage.removeItem(k)
 }
 
+/** Clears the cached draft form and linked draft row id (used when opening “new” report). */
+export function clearDraftClientStorage(uid: string): void {
+  localStorage.removeItem(draftKey(uid))
+  saveDraftRowIdToStorage(uid, null)
+}
+
 export function mergeWithDefaults(
   partial: Partial<ActivityReportFormState> | null,
 ): ActivityReportFormState {

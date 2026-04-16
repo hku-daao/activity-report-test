@@ -5,9 +5,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { auth } from '../lib/firebase'
 import {
   activityRowToFormState,
+  clearDraftClientStorage,
   defaultFormState,
   fetchActivityReportById,
-  loadDraftFromStorage,
   loadDraftRowIdFromStorage,
   mergeWithDefaults,
   saveDraftRowIdToStorage,
@@ -37,7 +37,7 @@ type Props = {
 
 export function CreateActivityReportPage({ user }: Props) {
   const { pathname } = useLocation()
-  /** Same component is mounted for `/activity/new` and `/activity/:id/edit` — derive id from the URL so Save always updates the correct draft. */
+  /** Same component is mounted for `/activity/new` and `/activity/:id/edit` — derive id from the URL. `/activity/new` always starts a blank form; `/activity/:id/edit` loads that draft. */
   const editPathMatch = pathname.match(/^\/activity\/([^/]+)\/edit\/?$/)
   const editReportId = editPathMatch?.[1]
   const isEditMode = Boolean(editReportId)
@@ -54,7 +54,6 @@ export function CreateActivityReportPage({ user }: Props) {
   const [allStaff, setAllStaff] = useState<StaffRow[]>([])
 
   const [form, setForm] = useState<ActivityReportFormState>(defaultFormState)
-  const [formReady, setFormReady] = useState(false)
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error'
     text: string
@@ -125,50 +124,24 @@ export function CreateActivityReportPage({ user }: Props) {
         setForm(next)
         saveDraftRowIdToStorage(user.uid, editReportId)
         saveDraftToStorage(user.uid, next)
-        setFormReady(true)
         setGate('ready')
         return
       }
 
-      const localPartial = loadDraftFromStorage(user.uid)
-      const draftRowId = loadDraftRowIdFromStorage(user.uid)
-      let next = mergeWithDefaults(localPartial)
-      let usedServerDraft = false
-
-      if (draftRowId) {
-        const rowRes = await fetchActivityReportById(draftRowId)
-        if (
-          rowRes.ok &&
-          rowRes.row.firebase_uid === user.uid &&
-          rowRes.row.status === 'draft' &&
-          !rowRes.row.deleted_at
-        ) {
-          next = activityRowToFormState(rowRes.row)
-          usedServerDraft = true
-        } else {
-          saveDraftRowIdToStorage(user.uid, null)
-        }
+      clearDraftClientStorage(user.uid)
+      let next = mergeWithDefaults(null)
+      const userTeams = parseStaffTeamIds(dash.data.staff)
+      next = {
+        ...next,
+        teamFilter: defaultTeamFilterValue(userTeams, tr.teams),
       }
-
-      if (!usedServerDraft && !localPartial) {
-        const userTeams = parseStaffTeamIds(dash.data.staff)
-        next = {
-          ...next,
-          teamFilter: defaultTeamFilterValue(userTeams, tr.teams),
-        }
-      }
-      if (
-        !editReportId &&
-        next.attendingStaffIds.length === 0 &&
-        dash.data.staff
-      ) {
+      if (dash.data.staff) {
         next = {
           ...next,
           attendingStaffIds: [dash.data.staff.id],
         }
       }
       setForm(next)
-      setFormReady(true)
       setGate('ready')
     }
     void run()
@@ -177,28 +150,30 @@ export function CreateActivityReportPage({ user }: Props) {
     }
   }, [email, user.uid, editReportId])
 
-  /** Includes the logged-in staff member; they are listed first. */
+  /**
+   * Staff matching the team dropdown, with “you” first. Also includes anyone
+   * already checked as attending who is not in the current team filter, so
+   * switching teams does not drop those selections from the list.
+   */
   const visibleStaff = useMemo(() => {
     if (!myStaff) return []
     const inTeam = filterStaffByTeam(allStaff, form.teamFilter, null)
+    const idsInTeam = new Set(inTeam.map((s) => String(s.id)))
+    const selectedOutsideFilter = form.attendingStaffIds
+      .map((id) => allStaff.find((s) => String(s.id) === String(id)))
+      .filter(
+        (s): s is StaffRow => s != null && !idsInTeam.has(String(s.id)),
+      )
+    selectedOutsideFilter.sort((a, b) =>
+      staffFullName(a).localeCompare(staffFullName(b), undefined, {
+        sensitivity: 'base',
+      }),
+    )
     const me = inTeam.find((s) => String(s.id) === String(myStaff.id))
     const others = inTeam.filter((s) => String(s.id) !== String(myStaff.id))
-    if (me) return [me, ...others]
-    return inTeam
-  }, [allStaff, form.teamFilter, myStaff])
-
-  useEffect(() => {
-    if (!formReady || !myStaff) return
-    setForm((f) => {
-      const filtered = filterStaffByTeam(allStaff, f.teamFilter, null)
-      const allowed = new Set(filtered.map((s) => String(s.id)))
-      const attending = f.attendingStaffIds.filter((id) =>
-        allowed.has(String(id)),
-      )
-      if (attending.length === f.attendingStaffIds.length) return f
-      return { ...f, attendingStaffIds: attending }
-    })
-  }, [form.teamFilter, allStaff, myStaff, formReady])
+    const primary = me ? [me, ...others] : inTeam
+    return [...primary, ...selectedOutsideFilter]
+  }, [allStaff, form.teamFilter, form.attendingStaffIds, myStaff])
 
   const toggleAttending = useCallback((staffId: string | number) => {
     setForm((f) => {
@@ -621,6 +596,18 @@ export function CreateActivityReportPage({ user }: Props) {
                   })
                 }}
               />
+              <button
+                type="button"
+                className="activity-icon-btn"
+                disabled={!url.trim()}
+                onClick={() => {
+                  const href = url.trim()
+                  if (!href) return
+                  window.open(href, '_blank', 'noopener,noreferrer')
+                }}
+              >
+                Go to link
+              </button>
               <button
                 type="button"
                 className="activity-icon-btn"

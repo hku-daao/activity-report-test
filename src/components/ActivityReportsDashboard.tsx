@@ -253,6 +253,8 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
         <span>Show deleted entries</span>
       </label>
 
+      <h3 className="dashboard-section-title">Activities</h3>
+
       {loading ? (
         <p className="activity-muted">Loading reports…</p>
       ) : error ? (
