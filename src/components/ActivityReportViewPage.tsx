@@ -289,27 +289,36 @@ export function ActivityReportViewPage({ user }: Props) {
           <div className="activity-view-row">
             <dt>Attachment links</dt>
             <dd>
-              {form.attachmentUrls.filter((u) => u.trim()).length === 0 ? (
+              {form.attachmentItems.filter((it) => it.url.trim()).length === 0 ? (
                 '—'
               ) : (
                 <ul className="activity-view-links">
-                  {form.attachmentUrls
-                    .map((u) => u.trim())
-                    .filter(Boolean)
-                    .map((u) => (
-                      <li key={u} className="activity-view-link-row">
-                        <a href={u} target="_blank" rel="noreferrer">
-                          {u}
-                        </a>
-                        <button
-                          type="button"
-                          className="activity-go-link-btn"
-                          onClick={() => {
-                            window.open(u, '_blank', 'noopener,noreferrer')
-                          }}
-                        >
-                          Go to link
-                        </button>
+                  {form.attachmentItems
+                    .map((it, idx) => ({
+                      url: it.url.trim(),
+                      description: it.description.trim(),
+                      idx,
+                    }))
+                    .filter((it) => it.url)
+                    .map(({ url, description, idx }) => (
+                      <li key={`${idx}-${url}`} className="activity-view-attachment-item">
+                        {description ? (
+                          <p className="activity-view-attachment-desc">{description}</p>
+                        ) : null}
+                        <div className="activity-view-link-row">
+                          <a href={url} target="_blank" rel="noreferrer">
+                            {url}
+                          </a>
+                          <button
+                            type="button"
+                            className="activity-go-link-btn"
+                            onClick={() => {
+                              window.open(url, '_blank', 'noopener,noreferrer')
+                            }}
+                          >
+                            Go to link
+                          </button>
+                        </div>
                       </li>
                     ))}
                 </ul>

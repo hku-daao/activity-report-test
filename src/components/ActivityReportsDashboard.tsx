@@ -278,7 +278,7 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
                     {statusLabel(row, deleted)}
                   </span>
                   <span className="activity-report-meta">
-                    {formatWhen(row.created_at)}
+                    Updated {formatWhen(row.updated_at)}
                     <span className="activity-report-owner">
                       {' '}
                       ·{' '}

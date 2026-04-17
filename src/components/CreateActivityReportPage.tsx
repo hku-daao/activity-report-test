@@ -580,55 +580,80 @@ export function CreateActivityReportPage({ user }: Props) {
 
         <div className="activity-field">
           <span className="activity-label">Attachment links (optional)</span>
-          {form.attachmentUrls.map((url, i) => (
-            <div key={i} className="activity-multi-row">
-              <input
-                type="url"
-                className="activity-input"
-                placeholder="https://…"
-                value={url}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setForm((f) => {
-                    const next = [...f.attachmentUrls]
-                    next[i] = v
-                    return { ...f, attachmentUrls: next }
-                  })
-                }}
-              />
-              <button
-                type="button"
-                className="activity-icon-btn"
-                disabled={!url.trim()}
-                onClick={() => {
-                  const href = url.trim()
-                  if (!href) return
-                  window.open(href, '_blank', 'noopener,noreferrer')
-                }}
-              >
-                Go to link
-              </button>
-              <button
-                type="button"
-                className="activity-icon-btn"
-                onClick={() =>
-                  setForm((f) => ({
-                    ...f,
-                    attachmentUrls: f.attachmentUrls.filter((_, j) => j !== i),
-                  }))
-                }
-                disabled={form.attachmentUrls.length <= 1}
-                aria-label="Remove attachment"
-              >
-                Remove
-              </button>
+          {form.attachmentItems.map((item, i) => (
+            <div key={i} className="activity-attachment-block">
+              <label className="activity-field activity-field--stacked">
+                <span className="activity-label">Description</span>
+                <input
+                  type="text"
+                  className="activity-input"
+                  placeholder="What this link is (e.g. meeting notes)"
+                  value={item.description}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setForm((f) => {
+                      const next = [...f.attachmentItems]
+                      next[i] = { ...next[i], description: v }
+                      return { ...f, attachmentItems: next }
+                    })
+                  }}
+                />
+              </label>
+              <div className="activity-multi-row">
+                <input
+                  type="url"
+                  className="activity-input"
+                  placeholder="https://…"
+                  value={item.url}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setForm((f) => {
+                      const next = [...f.attachmentItems]
+                      next[i] = { ...next[i], url: v }
+                      return { ...f, attachmentItems: next }
+                    })
+                  }}
+                />
+                <button
+                  type="button"
+                  className="activity-icon-btn"
+                  disabled={!item.url.trim()}
+                  onClick={() => {
+                    const href = item.url.trim()
+                    if (!href) return
+                    window.open(href, '_blank', 'noopener,noreferrer')
+                  }}
+                >
+                  Go to link
+                </button>
+                <button
+                  type="button"
+                  className="activity-icon-btn"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      attachmentItems: f.attachmentItems.filter((_, j) => j !== i),
+                    }))
+                  }
+                  disabled={form.attachmentItems.length <= 1}
+                  aria-label="Remove attachment"
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
           <button
             type="button"
             className="activity-add-btn"
             onClick={() =>
-              setForm((f) => ({ ...f, attachmentUrls: [...f.attachmentUrls, ''] }))
+              setForm((f) => ({
+                ...f,
+                attachmentItems: [
+                  ...f.attachmentItems,
+                  { url: '', description: '' },
+                ],
+              }))
             }
           >
             Add attachment link

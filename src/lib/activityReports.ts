@@ -4,6 +4,11 @@ import { fetchFirebaseUidsForEmails } from './profile'
 
 export type TeamFilterValue = '__all__' | string
 
+export type AttachmentItem = {
+  url: string
+  description: string
+}
+
 export type ActivityReportFormState = {
   title: string
   teamFilter: TeamFilterValue
@@ -16,7 +21,7 @@ export type ActivityReportFormState = {
   durationHours: number
   durationMinutes: number
   detail: string
-  attachmentUrls: string[]
+  attachmentItems: AttachmentItem[]
 }
 
 export type ActivityReportRow = {
@@ -34,6 +39,8 @@ export type ActivityReportRow = {
   duration_minutes: number
   detail: string
   attachment_urls: string[] | null
+  /** Parallel to `attachment_urls`; may be absent on older rows. */
+  attachment_descriptions?: string[] | null
   status: 'draft' | 'submitted'
   created_at: string
   updated_at: string
@@ -54,7 +61,7 @@ export function defaultFormState(): ActivityReportFormState {
     durationHours: 1,
     durationMinutes: 0,
     detail: '',
-    attachmentUrls: [''],
+    attachmentItems: [{ url: '', description: '' }],
   }
 }
 
@@ -103,9 +110,13 @@ export function mergeWithDefaults(
 ): ActivityReportFormState {
   const base = defaultFormState()
   if (!partial) return base
+  const legacy = partial as Partial<ActivityReportFormState> & {
+    attachmentUrls?: string[]
+  }
+  const { attachmentUrls: _legacyUrls, ...restPartial } = legacy
   return {
     ...base,
-    ...partial,
+    ...restPartial,
     title: typeof partial.title === 'string' ? partial.title : base.title,
     attendingStaffIds: Array.isArray(partial.attendingStaffIds)
       ? partial.attendingStaffIds
@@ -115,11 +126,33 @@ export function mergeWithDefaults(
       partial.otherPeopleNames.length > 0
         ? partial.otherPeopleNames
         : base.otherPeopleNames,
-    attachmentUrls:
-      Array.isArray(partial.attachmentUrls) && partial.attachmentUrls.length > 0
-        ? partial.attachmentUrls
-        : base.attachmentUrls,
+    attachmentItems:
+      normalizeAttachmentItemsFromPartial(legacy) ?? base.attachmentItems,
   }
+}
+
+function normalizeAttachmentItemsFromPartial(
+  partial: Partial<ActivityReportFormState> & { attachmentUrls?: string[] },
+): ActivityReportFormState['attachmentItems'] | null {
+  if (
+    Array.isArray(partial.attachmentItems) &&
+    partial.attachmentItems.length > 0
+  ) {
+    return partial.attachmentItems.map((x) => ({
+      url: typeof x?.url === 'string' ? x.url : '',
+      description: typeof x?.description === 'string' ? x.description : '',
+    }))
+  }
+  if (
+    Array.isArray(partial.attachmentUrls) &&
+    partial.attachmentUrls.length > 0
+  ) {
+    return partial.attachmentUrls.map((url) => ({
+      url: typeof url === 'string' ? url : '',
+      description: '',
+    }))
+  }
+  return null
 }
 
 function isoToDatetimeLocal(iso: string | null): string {
@@ -191,11 +224,21 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
     durationHours: hours,
     durationMinutes: minutes,
     detail: row.detail ?? '',
-    attachmentUrls:
-      row.attachment_urls && row.attachment_urls.length > 0
-        ? [...row.attachment_urls]
-        : [''],
+    attachmentItems: attachmentItemsFromRow(row),
   }
+}
+
+function attachmentItemsFromRow(row: ActivityReportRow): AttachmentItem[] {
+  const urls = row.attachment_urls ?? []
+  const descs = row.attachment_descriptions ?? []
+  if (urls.length === 0 && descs.length === 0) {
+    return [{ url: '', description: '' }]
+  }
+  const n = Math.max(urls.length, descs.length)
+  return Array.from({ length: n }, (_, i) => ({
+    url: urls[i] != null ? String(urls[i]) : '',
+    description: descs[i] != null ? String(descs[i]) : '',
+  }))
 }
 
 function buildRowPayload(
@@ -208,9 +251,15 @@ function buildRowPayload(
     (Number(state.durationHours) || 0) * 60 + (Number(state.durationMinutes) || 0),
   )
 
-  const attachmentUrls = state.attachmentUrls
-    .map((u) => u.trim())
-    .filter(Boolean)
+  const attachmentPairs = state.attachmentItems
+    .map((item) => ({
+      url: item.url.trim(),
+      description: item.description.trim(),
+    }))
+    .filter((p) => p.url !== '')
+
+  const attachment_urls = attachmentPairs.map((p) => p.url)
+  const attachment_descriptions = attachmentPairs.map((p) => p.description)
 
   const otherPeopleNames = state.otherPeopleEnabled
     ? state.otherPeopleNames.map((n) => n.trim()).filter(Boolean)
@@ -231,7 +280,8 @@ function buildRowPayload(
       : null,
     duration_minutes: durationMinutes,
     detail: state.detail.trim(),
-    attachment_urls: attachmentUrls,
+    attachment_urls,
+    attachment_descriptions,
     status,
     updated_at: new Date().toISOString(),
   }
@@ -270,7 +320,7 @@ export async function fetchActivityReportsForUids(
     .from('activity_reports')
     .select('*')
     .in('firebase_uid', uids)
-    .order('created_at', { ascending: false })
+    .order('updated_at', { ascending: false })
 
   if (error) {
     return { ok: false, message: error.message }
@@ -545,6 +595,7 @@ export function reportMatchesSearch(
     row.crm_constituent_no,
     creatorFullName,
     ...(row.attachment_urls ?? []),
+    ...(row.attachment_descriptions ?? []),
   ]
     .filter(Boolean)
     .join('\n')

@@ -5,8 +5,11 @@
   "targets": {
     "daao-a20c6": {
       "hosting": {
-        "activity-report-test": ["activity-report-test"]
+        "activity-report-test": [
+          "activity-report-test"
+        ]
       }
     }
-  }
+  },
+  "etags": {}
 }

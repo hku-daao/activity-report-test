@@ -15,6 +15,7 @@ create table if not exists public.activity_reports (
   duration_minutes int not null default 0,
   detail text not null default '',
   attachment_urls text[] not null default '{}',
+  attachment_descriptions text[] not null default '{}',
   status text not null check (status in ('draft', 'submitted')),
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
@@ -63,6 +64,9 @@ create policy "activity_reports_allow_delete_anon"
 
 -- If the table already existed without title:
 alter table public.activity_reports add column if not exists title text;
+
+-- Parallel labels for each URL in `attachment_urls` (same length when saved from the app).
+alter table public.activity_reports add column if not exists attachment_descriptions text[] not null default '{}';
 
 -- Soft delete (dashboard hides unless “show deleted”)
 alter table public.activity_reports add column if not exists deleted_at timestamptz;

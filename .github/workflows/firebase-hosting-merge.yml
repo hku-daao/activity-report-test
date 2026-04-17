@@ -18,3 +18,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DAAO_A20C6 }}
           channelId: live
           projectId: daao-a20c6
+          target: activity-report-test

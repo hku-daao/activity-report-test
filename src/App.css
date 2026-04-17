@@ -351,12 +351,28 @@
   word-break: break-all;
 }
 
+.activity-view-attachment-item {
+  margin-bottom: 12px;
+}
+
+.activity-view-attachment-item:last-child {
+  margin-bottom: 0;
+}
+
+.activity-view-attachment-desc {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+  line-height: 1.35;
+}
+
 .activity-view-link-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px 12px;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .activity-view-link-row:last-child {
@@ -534,6 +550,30 @@
 .activity-suffix {
   font-size: 14px;
   color: var(--text);
+}
+
+.activity-attachment-block {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-attachment-block:last-of-type {
+  border-bottom: none;
+  margin-bottom: 8px;
+  padding-bottom: 0;
+}
+
+.activity-field--stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  width: 100%;
+}
+
+.activity-field--stacked .activity-label {
+  font-size: 13px;
 }
 
 .activity-multi-row {
