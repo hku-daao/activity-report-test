@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { auth } from '../lib/firebase'
+import { auth, isFirebaseStorageBucketConfigured } from '../lib/firebase'
 import {
   activityRowToFormState,
   clearDraftClientStorage,
@@ -14,7 +14,6 @@ import {
   saveDraftToStorage,
   saveOrUpdateDraftInSupabase,
   softDeleteActivityReport,
-  submitActivityReportToSupabase,
   type ActivityReportFormState,
 } from '../lib/activityReports'
 import {
@@ -30,6 +29,8 @@ import {
   filterStaffByTeam,
   parseStaffTeamIds,
 } from '../lib/teamsAndStaff'
+import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
+import { StorageAttachmentField } from './StorageAttachmentField'
 
 type Props = {
   user: User
@@ -60,6 +61,28 @@ export function CreateActivityReportPage({ user }: Props) {
   } | null>(null)
   const [saving, setSaving] = useState(false)
   const [deletingDraft, setDeletingDraft] = useState(false)
+  /** Multi-line paste area for Donor / Prospect / Guest before "Split names". */
+  const [donorBulkText, setDonorBulkText] = useState('')
+  /** Multi-line paste area for Other colleagues before "Split names". */
+  const [otherColleaguesBulkText, setOtherColleaguesBulkText] = useState('')
+
+  const formRef = useRef(form)
+  useEffect(() => {
+    formRef.current = form
+  }, [form])
+
+  const attachmentsRef = useRef(form.attachmentItems)
+  useEffect(() => {
+    attachmentsRef.current = form.attachmentItems
+  }, [form.attachmentItems])
+
+  const pendingActivityPathRef = useRef(`pending/${crypto.randomUUID()}`)
+  const activityAttachmentPathSegment = useMemo(() => {
+    if (editReportId) return editReportId
+    const draftId = loadDraftRowIdFromStorage(user.uid)
+    if (draftId) return draftId
+    return pendingActivityPathRef.current
+  }, [editReportId, user.uid])
 
   useEffect(() => {
     let cancelled = false
@@ -111,12 +134,11 @@ export function CreateActivityReportPage({ user }: Props) {
         if (
           !rowRes.ok ||
           rowRes.row.firebase_uid !== user.uid ||
-          rowRes.row.status !== 'draft' ||
           rowRes.row.deleted_at
         ) {
           setGate('error')
           setGateMessage(
-            'This draft is not available for editing, or it was already submitted.',
+            'This report is not available for editing, or it was deleted.',
           )
           return
         }
@@ -202,9 +224,12 @@ export function CreateActivityReportPage({ user }: Props) {
         return
       }
       saveDraftRowIdToStorage(user.uid, result.id)
+      if (!isEditMode) {
+        navigate(`/activity/${result.id}/edit`, { replace: true })
+      }
       setFeedback({
         type: 'success',
-        text: 'Draft saved. You can continue editing or submit when ready.',
+        text: 'Saved.',
       })
     } finally {
       setSaving(false)
@@ -214,7 +239,7 @@ export function CreateActivityReportPage({ user }: Props) {
   const handleDeleteDraft = async () => {
     if (!isEditMode || !editReportId) return
     const ok = window.confirm(
-      'Delete this unsubmitted draft? It will be removed from the list unless you turn on “Show deleted entries”.',
+      'Delete this report? It will be removed from the list unless you turn on “Show deleted entries”.',
     )
     if (!ok) return
     setFeedback(null)
@@ -232,47 +257,54 @@ export function CreateActivityReportPage({ user }: Props) {
     }
   }
 
-  const handleSubmit = async () => {
+  const handleSplitDonorNames = () => {
+    const lines = donorBulkText
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (lines.length === 0) {
+      setFeedback({
+        type: 'error',
+        text: 'Enter at least one name (one per line), then click Split names.',
+      })
+      return
+    }
     setFeedback(null)
-    if (!form.eventDateTime.trim()) {
-      setFeedback({
-        type: 'error',
-        text: 'Please set Event Date/Time before submitting.',
-      })
-      return
-    }
-    if (!form.detail.trim()) {
-      setFeedback({
-        type: 'error',
-        text: 'Please enter Detail of the activity before submitting.',
-      })
-      return
-    }
-    const totalMin =
-      (Number(form.durationHours) || 0) * 60 + (Number(form.durationMinutes) || 0)
-    if (totalMin <= 0) {
-      setFeedback({
-        type: 'error',
-        text: 'Duration must be greater than zero.',
-      })
-      return
-    }
-
-    setSaving(true)
-    const draftRowId = isEditMode
-      ? editReportId!
-      : loadDraftRowIdFromStorage(user.uid)
-    const result = await submitActivityReportToSupabase(user, form, {
-      draftRowId,
+    setForm((f) => {
+      const kept = f.otherPartyNames
+        .map((s) => String(s).trim())
+        .filter(Boolean)
+      return {
+        ...f,
+        otherPartyNames: [...lines, ...kept],
+      }
     })
-    setSaving(false)
-    if (result.ok) {
-      localStorage.removeItem(`activityReportDraft:${user.uid}`)
-      saveDraftRowIdToStorage(user.uid, null)
-      navigate('/', { replace: true })
-    } else {
-      setFeedback({ type: 'error', text: result.message })
+    setDonorBulkText('')
+  }
+
+  const handleSplitOtherColleaguesNames = () => {
+    const lines = otherColleaguesBulkText
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (lines.length === 0) {
+      setFeedback({
+        type: 'error',
+        text: 'Enter at least one colleague name (one per line), then click Split names.',
+      })
+      return
     }
+    setFeedback(null)
+    setForm((f) => {
+      const kept = f.otherPeopleNames
+        .map((s) => String(s).trim())
+        .filter(Boolean)
+      return {
+        ...f,
+        otherPeopleNames: [...lines, ...kept],
+      }
+    })
+    setOtherColleaguesBulkText('')
   }
 
   const handleLogout = () => {
@@ -324,24 +356,32 @@ export function CreateActivityReportPage({ user }: Props) {
     )
   }
 
+  const canUpload =
+    isFirebaseStorageBucketConfigured() && Boolean(firebaseAuth)
+  const uploadDisabledHint =
+    'File upload requires a Firebase storage bucket in .env. Uploaded files are opened with “Download” only — the storage path is not shown in the app.'
+
   return (
     <div className="dashboard-page activity-form-page">
       <header className="dashboard-topbar">
         <div className="activity-topbar-left">
-          <Link to="/" className="activity-back-link">
-            ← Home
-          </Link>
+          <SessionBackButton />
           <h1 className="dashboard-brand">
-            {isEditMode ? 'Edit activity report' : 'Create Activity Report'}
+            Meeting / Engagement / Activity Reports
           </h1>
         </div>
-        <button
-          type="button"
-          className="dashboard-logout"
-          onClick={handleLogout}
-        >
-          Log out
-        </button>
+        <div className="dashboard-topbar-end">
+          <SessionUserBeforeLogout
+            label={myStaff ? staffFullName(myStaff) : null}
+          />
+          <button
+            type="button"
+            className="dashboard-logout"
+            onClick={handleLogout}
+          >
+            Log out
+          </button>
+        </div>
       </header>
 
       <form
@@ -420,96 +460,204 @@ export function CreateActivityReportPage({ user }: Props) {
           <input
             type="checkbox"
             checked={form.otherPeopleEnabled}
-            onChange={(e) =>
+            onChange={(e) => {
+              const checked = e.target.checked
+              if (!checked) {
+                setOtherColleaguesBulkText('')
+              }
               setForm((f) => ({
                 ...f,
-                otherPeopleEnabled: e.target.checked,
-                otherPeopleNames: e.target.checked
+                otherPeopleEnabled: checked,
+                otherPeopleNames: checked
                   ? f.otherPeopleNames.length > 0
                     ? f.otherPeopleNames
                     : ['']
                   : f.otherPeopleNames,
               }))
-            }
+            }}
           />
-          <span className="activity-label-inline">Other people:</span>
+          <span className="activity-label-inline">Other colleagues</span>
         </label>
 
         {form.otherPeopleEnabled ? (
-          <div className="activity-field activity-multi">
-            {form.otherPeopleNames.map((name, i) => (
-              <div key={i} className="activity-multi-row">
-                <input
-                  type="text"
-                  className="activity-input"
-                  placeholder="Name"
-                  value={name}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => {
-                      const next = [...f.otherPeopleNames]
-                      next[i] = v
-                      return { ...f, otherPeopleNames: next }
-                    })
-                  }}
-                />
+          <>
+            <div className="activity-field">
+              <p className="activity-hint">
+                Type or paste one name per line, then click{' '}
+                <strong>Split names</strong> to add each line as its own box{' '}
+                <strong>above</strong> any names you already have. You can add or
+                remove boxes afterwards.
+              </p>
+              <textarea
+                className="activity-textarea activity-textarea--compact"
+                rows={4}
+                value={otherColleaguesBulkText}
+                onChange={(e) => setOtherColleaguesBulkText(e.target.value)}
+                placeholder={'Example:\nAlex Kim\nPat Lee\n…'}
+              />
+              <div className="activity-split-row">
                 <button
                   type="button"
-                  className="activity-icon-btn"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      otherPeopleNames: f.otherPeopleNames.filter(
-                        (_, j) => j !== i,
-                      ),
-                    }))
-                  }
-                  disabled={form.otherPeopleNames.length <= 1}
-                  aria-label="Remove name"
+                  className="auth-submit secondary"
+                  onClick={handleSplitOtherColleaguesNames}
                 >
-                  Remove
+                  Split names
                 </button>
               </div>
-            ))}
-            <button
-              type="button"
-              className="activity-add-btn"
-              onClick={() =>
-                setForm((f) => ({
-                  ...f,
-                  otherPeopleNames: [...f.otherPeopleNames, ''],
-                }))
-              }
-            >
-              Add another name
-            </button>
-          </div>
+            </div>
+
+            <div className="activity-field activity-multi">
+              <span className="activity-label">Names</span>
+              {form.otherPeopleNames.map((name, i) => (
+                <div key={i} className="activity-multi-row">
+                  <input
+                    type="text"
+                    className="activity-input"
+                    placeholder="Name"
+                    value={name}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setForm((f) => {
+                        const next = [...f.otherPeopleNames]
+                        next[i] = v
+                        return { ...f, otherPeopleNames: next }
+                      })
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="activity-icon-btn"
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        otherPeopleNames: f.otherPeopleNames.filter(
+                          (_, j) => j !== i,
+                        ),
+                      }))
+                    }
+                    disabled={form.otherPeopleNames.length <= 1}
+                    aria-label="Remove colleague name"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="activity-add-btn"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    otherPeopleNames: [...f.otherPeopleNames, ''],
+                  }))
+                }
+              >
+                Add another name
+              </button>
+            </div>
+          </>
         ) : null}
 
-        <div className="activity-row-2">
-          <label className="activity-field activity-field-grow">
-            <span className="activity-label">The other party&apos;s name:</span>
-            <input
-              type="text"
-              className="activity-input"
-              value={form.otherPartyName}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, otherPartyName: e.target.value }))
-              }
-            />
-          </label>
-          <label className="activity-field activity-field-grow">
-            <span className="activity-label">CRM Constituent No (if any)</span>
-            <input
-              type="text"
-              className="activity-input"
-              value={form.crmConstituentNo}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, crmConstituentNo: e.target.value }))
-              }
-            />
-          </label>
+        <div className="activity-field">
+          <span className="activity-label">Donor / Prospect / Guest:</span>
+          <p className="activity-hint">
+            Type or paste one name per line, then click <strong>Split names</strong>{' '}
+            to add each line as its own box <strong>above</strong> any names you
+            already have. You can add or remove boxes afterwards.
+          </p>
+          <textarea
+            className="activity-textarea activity-textarea--compact"
+            rows={4}
+            value={donorBulkText}
+            onChange={(e) => setDonorBulkText(e.target.value)}
+            placeholder={'Example:\nJane Doe\nAcme Foundation\n…'}
+          />
+          <div className="activity-split-row">
+            <button
+              type="button"
+              className="auth-submit secondary"
+              onClick={handleSplitDonorNames}
+            >
+              Split names
+            </button>
+          </div>
         </div>
+
+        <div className="activity-field activity-multi">
+          <span className="activity-label">Names</span>
+          {form.otherPartyNames.map((name, i) => (
+            <div key={i} className="activity-multi-row">
+              <input
+                type="text"
+                className="activity-input"
+                placeholder="Name"
+                value={name}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setForm((f) => {
+                    const next = [...f.otherPartyNames]
+                    next[i] = v
+                    return { ...f, otherPartyNames: next }
+                  })
+                }}
+              />
+              <button
+                type="button"
+                className="activity-icon-btn"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    otherPartyNames: f.otherPartyNames.filter((_, j) => j !== i),
+                  }))
+                }
+                disabled={form.otherPartyNames.length <= 1}
+                aria-label="Remove name"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="activity-add-btn"
+            onClick={() =>
+              setForm((f) => ({
+                ...f,
+                otherPartyNames: [...f.otherPartyNames, ''],
+              }))
+            }
+          >
+            Add another name
+          </button>
+        </div>
+
+        <label className="activity-field">
+          <span className="activity-label">CRM Constituent No (if any)</span>
+          <input
+            type="text"
+            className="activity-input"
+            value={form.crmConstituentNo}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, crmConstituentNo: e.target.value }))
+            }
+          />
+        </label>
+
+        <label className="activity-field activity-checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.multipleDaysEvent}
+            onChange={(e) => {
+              const checked = e.target.checked
+              setForm((f) => ({
+                ...f,
+                multipleDaysEvent: checked,
+                eventEndDateTime: checked ? f.eventEndDateTime : '',
+              }))
+            }}
+          />
+          <span className="activity-label-inline">Multiple days event</span>
+        </label>
 
         <div className="activity-row-2">
           <label className="activity-field activity-field-grow">
@@ -523,47 +671,61 @@ export function CreateActivityReportPage({ user }: Props) {
               }
             />
           </label>
-          <div className="activity-field activity-duration">
-            <span className="activity-label">Duration:</span>
-            <div className="activity-duration-inputs">
-              <label>
-                <span className="sr-only">Hours</span>
-                <input
-                  type="number"
-                  min={0}
-                  className="activity-input activity-input-narrow"
-                  value={form.durationHours}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      durationHours: Math.max(0, Number(e.target.value) || 0),
-                    }))
-                  }
-                />
-                <span className="activity-suffix">h</span>
-              </label>
-              <label>
-                <span className="sr-only">Minutes</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={59}
-                  className="activity-input activity-input-narrow"
-                  value={form.durationMinutes}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      durationMinutes: Math.min(
-                        59,
-                        Math.max(0, Number(e.target.value) || 0),
-                      ),
-                    }))
-                  }
-                />
-                <span className="activity-suffix">m</span>
-              </label>
+          {form.multipleDaysEvent ? (
+            <label className="activity-field activity-field-grow">
+              <span className="activity-label">End Date/Time</span>
+              <input
+                type="datetime-local"
+                className="activity-input"
+                value={form.eventEndDateTime}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, eventEndDateTime: e.target.value }))
+                }
+              />
+            </label>
+          ) : (
+            <div className="activity-field activity-duration">
+              <span className="activity-label">Duration:</span>
+              <div className="activity-duration-inputs">
+                <label>
+                  <span className="sr-only">Hours</span>
+                  <input
+                    type="number"
+                    min={0}
+                    className="activity-input activity-input-narrow"
+                    value={form.durationHours}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        durationHours: Math.max(0, Number(e.target.value) || 0),
+                      }))
+                    }
+                  />
+                  <span className="activity-suffix">h</span>
+                </label>
+                <label>
+                  <span className="sr-only">Minutes</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    className="activity-input activity-input-narrow"
+                    value={form.durationMinutes}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        durationMinutes: Math.min(
+                          59,
+                          Math.max(0, Number(e.target.value) || 0),
+                        ),
+                      }))
+                    }
+                  />
+                  <span className="activity-suffix">m</span>
+                </label>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <label className="activity-field">
@@ -578,87 +740,49 @@ export function CreateActivityReportPage({ user }: Props) {
           />
         </label>
 
-        <div className="activity-field">
-          <span className="activity-label">Attachment links (optional)</span>
-          {form.attachmentItems.map((item, i) => (
-            <div key={i} className="activity-attachment-block">
-              <label className="activity-field activity-field--stacked">
-                <span className="activity-label">Description</span>
-                <input
-                  type="text"
-                  className="activity-input"
-                  placeholder="What this link is (e.g. meeting notes)"
-                  value={item.description}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => {
-                      const next = [...f.attachmentItems]
-                      next[i] = { ...next[i], description: v }
-                      return { ...f, attachmentItems: next }
-                    })
-                  }}
-                />
-              </label>
-              <div className="activity-multi-row">
-                <input
-                  type="url"
-                  className="activity-input"
-                  placeholder="https://…"
-                  value={item.url}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => {
-                      const next = [...f.attachmentItems]
-                      next[i] = { ...next[i], url: v }
-                      return { ...f, attachmentItems: next }
-                    })
-                  }}
-                />
-                <button
-                  type="button"
-                  className="activity-icon-btn"
-                  disabled={!item.url.trim()}
-                  onClick={() => {
-                    const href = item.url.trim()
-                    if (!href) return
-                    window.open(href, '_blank', 'noopener,noreferrer')
-                  }}
-                >
-                  Go to link
-                </button>
-                <button
-                  type="button"
-                  className="activity-icon-btn"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      attachmentItems: f.attachmentItems.filter((_, j) => j !== i),
-                    }))
-                  }
-                  disabled={form.attachmentItems.length <= 1}
-                  aria-label="Remove attachment"
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="activity-add-btn"
-            onClick={() =>
-              setForm((f) => ({
-                ...f,
-                attachmentItems: [
-                  ...f.attachmentItems,
-                  { url: '', description: '' },
-                ],
-              }))
-            }
-          >
-            Add attachment link
-          </button>
-        </div>
+        <StorageAttachmentField
+          user={user}
+          canUpload={canUpload}
+          uploadDisabledHint={uploadDisabledHint}
+          attachments={form.attachmentItems}
+          setAttachments={(updater) =>
+            setForm((f) => ({
+              ...f,
+              attachmentItems:
+                typeof updater === 'function'
+                  ? updater(f.attachmentItems)
+                  : updater,
+            }))
+          }
+          attachmentsRef={attachmentsRef}
+          uploadArea="activity"
+          pathSegment={activityAttachmentPathSegment}
+          isNewEntityRoute={!isEditMode}
+          hasPersistedRow={isEditMode}
+          persistMode={isEditMode ? 'immediate' : 'deferred'}
+          setFeedback={setFeedback}
+          persistAttachments={
+            isEditMode
+              ? async (next) => {
+                  const result = await saveOrUpdateDraftInSupabase(
+                    user,
+                    { ...formRef.current, attachmentItems: next },
+                    editReportId!,
+                  )
+                  return result.ok
+                    ? { ok: true }
+                    : { ok: false, message: result.message }
+                }
+              : undefined
+          }
+          onAttachmentsPersisted={(next) => {
+            setForm((f) => {
+              const merged = { ...f, attachmentItems: next }
+              saveDraftToStorage(user.uid, merged)
+              return merged
+            })
+          }}
+        />
 
         {feedback ? (
           <p
@@ -677,7 +801,7 @@ export function CreateActivityReportPage({ user }: Props) {
               disabled={saving || deletingDraft}
               onClick={() => void handleDeleteDraft()}
             >
-              {deletingDraft ? 'Deleting…' : 'Delete draft'}
+              {deletingDraft ? 'Deleting…' : 'Delete report'}
             </button>
           </div>
         ) : null}
@@ -685,19 +809,11 @@ export function CreateActivityReportPage({ user }: Props) {
         <div className="activity-actions">
           <button
             type="button"
-            className="auth-submit secondary"
-            disabled={saving || deletingDraft}
-            onClick={handleSave}
-          >
-            Save
-          </button>
-          <button
-            type="button"
             className="auth-submit"
             disabled={saving || deletingDraft}
-            onClick={() => void handleSubmit()}
+            onClick={() => void handleSave()}
           >
-            {saving ? 'Please wait…' : 'Submit'}
+            {saving ? 'Please wait…' : 'Save'}
           </button>
         </div>
       </form>

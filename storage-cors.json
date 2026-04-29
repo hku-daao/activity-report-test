@@ -1,0 +1,13 @@
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": [
+      "Content-Type",
+      "Content-Disposition",
+      "Content-Length",
+      "x-goog-*"
+    ]
+  }
+]

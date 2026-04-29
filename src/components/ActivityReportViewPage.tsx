@@ -1,18 +1,24 @@
 import { useEffect, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { auth } from '../lib/firebase'
 import {
   activityRowToFormState,
+  attachmentItemsFromRow,
   fetchActivityReportById,
   parseAttendingIds,
   parseOtherPeopleNamesFromRow,
   resolveViewerFirebaseUids,
-  softDeleteActivityReport,
   type ActivityReportRow,
 } from '../lib/activityReports'
-import { loadStaffDashboard, staffFullName, type StaffRow } from '../lib/staffAccess'
+import { downloadStorageAttachmentToDevice } from '../lib/proactiveAttachmentStorage'
+import {
+  loadStaffDashboard,
+  staffFullName,
+  type StaffRow,
+} from '../lib/staffAccess'
+import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 import { fetchAllStaff } from '../lib/teamsAndStaff'
 
 type Props = {
@@ -33,7 +39,6 @@ function formatWhen(iso: string | null): string {
 
 export function ActivityReportViewPage({ user }: Props) {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
   const firebaseAuth = auth
   const [state, setState] = useState<
     | { status: 'loading' }
@@ -41,11 +46,13 @@ export function ActivityReportViewPage({ user }: Props) {
     | { status: 'ready'; row: ActivityReportRow }
     | { status: 'forbidden' }
   >({ status: 'loading' })
-  const [deleting, setDeleting] = useState(false)
   const [staffList, setStaffList] = useState<StaffRow[] | null>(null)
+  const [sessionUserName, setSessionUserName] = useState<string | null>(null)
+  const [downloadingPath, setDownloadingPath] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
+    setSessionUserName(null)
     void (async () => {
       if (!id) {
         setState({ status: 'error', message: 'Missing report id.' })
@@ -66,6 +73,7 @@ export function ActivityReportViewPage({ user }: Props) {
         })
         return
       }
+      setSessionUserName(staffFullName(dash.data.staff))
 
       const subEmails =
         dash.data.subordinates
@@ -115,24 +123,6 @@ export function ActivityReportViewPage({ user }: Props) {
     if (firebaseAuth) void signOut(firebaseAuth)
   }
 
-  const handleDelete = async () => {
-    if (!id || state.status !== 'ready') return
-    const row = state.row
-    if (row.firebase_uid !== user.uid || row.deleted_at) return
-    const ok = window.confirm(
-      'Delete this activity report? It will be hidden from the dashboard unless you turn on “Show deleted entries”.',
-    )
-    if (!ok) return
-    setDeleting(true)
-    const result = await softDeleteActivityReport(id, user.uid)
-    setDeleting(false)
-    if (result.ok) {
-      navigate('/', { replace: true })
-    } else {
-      window.alert(result.message)
-    }
-  }
-
   if (!firebaseAuth) {
     return null
   }
@@ -173,38 +163,32 @@ export function ActivityReportViewPage({ user }: Props) {
   const isOwner = row.firebase_uid === user.uid
   const isSoftDeleted = Boolean(row.deleted_at)
 
-  if (
-    row.status === 'draft' &&
-    !isSoftDeleted &&
-    isOwner
-  ) {
+  if (isOwner && !isSoftDeleted) {
     return <Navigate to={`/activity/${id}/edit`} replace />
   }
 
   const form = activityRowToFormState(row)
+  const attachmentList = attachmentItemsFromRow(row)
   const otherPeopleFromRow = parseOtherPeopleNamesFromRow(row)
-  const statusLabel =
-    row.status === 'submitted' ? 'Submitted' : 'Unsubmitted'
-  const statusBadgeClass = isSoftDeleted
-    ? 'activity-report-status is-record-deleted'
-    : `activity-report-status is-${row.status === 'submitted' ? 'submitted' : 'draft'}`
+  const rowMultipleDays = Boolean(row.multiple_days_event)
 
   return (
     <div className="dashboard-page activity-form-page">
       <header className="dashboard-topbar">
         <div className="activity-topbar-left">
-          <Link to="/" className="activity-back-link">
-            ← Home
-          </Link>
+          <SessionBackButton />
           <h1 className="dashboard-brand">Activity report</h1>
         </div>
-        <button
-          type="button"
-          className="dashboard-logout"
-          onClick={handleLogout}
-        >
-          Log out
-        </button>
+        <div className="dashboard-topbar-end">
+          <SessionUserBeforeLogout label={sessionUserName} />
+          <button
+            type="button"
+            className="dashboard-logout"
+            onClick={handleLogout}
+          >
+            Log out
+          </button>
+        </div>
       </header>
 
       <div className="activity-view-panel">
@@ -215,28 +199,11 @@ export function ActivityReportViewPage({ user }: Props) {
           </p>
         ) : null}
 
-        <p className="activity-view-status">
-          <span className={statusBadgeClass}>
-            {isSoftDeleted ? 'Deleted' : statusLabel}
-          </span>
-          <span className="activity-muted">
-            {' '}
-            · Created {formatWhen(row.created_at)}
-          </span>
+        <p className="activity-muted activity-view-meta">
+          Created {formatWhen(row.created_at)}
+          {' · '}
+          Updated {formatWhen(row.updated_at)}
         </p>
-
-        {isOwner && !isSoftDeleted ? (
-          <div className="activity-view-actions">
-            <button
-              type="button"
-              className="auth-submit activity-delete-btn"
-              disabled={deleting}
-              onClick={() => void handleDelete()}
-            >
-              {deleting ? 'Deleting…' : 'Delete report'}
-            </button>
-          </div>
-        ) : null}
 
         <dl className="activity-view-dl">
           <div className="activity-view-row">
@@ -253,12 +220,18 @@ export function ActivityReportViewPage({ user }: Props) {
                 {row.other_people_enabled ||
                 otherPeopleFromRow.length > 0 ? (
                   <div className="activity-view-other-people-under-attending">
-                    <p className="activity-view-other-people-label">Other people</p>
-                    <p className="activity-view-attending-line">
-                      {otherPeopleFromRow.length > 0
-                        ? otherPeopleFromRow.join(', ')
-                        : '—'}
+                    <p className="activity-view-other-people-label">
+                      Other colleagues
                     </p>
+                    {otherPeopleFromRow.length > 0 ? (
+                      <ul className="activity-view-donor-list">
+                        {otherPeopleFromRow.map((n, i) => (
+                          <li key={`${i}-${n}`}>{n}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="activity-view-attending-line">—</p>
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -268,15 +241,36 @@ export function ActivityReportViewPage({ user }: Props) {
             <dt>Event Date/Time</dt>
             <dd>{formatWhen(row.event_at)}</dd>
           </div>
+          {rowMultipleDays && row.event_end_at ? (
+            <div className="activity-view-row">
+              <dt>End Date/Time</dt>
+              <dd>{formatWhen(row.event_end_at)}</dd>
+            </div>
+          ) : null}
+          {!rowMultipleDays ? (
+            <div className="activity-view-row">
+              <dt>Duration</dt>
+              <dd>
+                {form.durationHours}h {form.durationMinutes}m
+              </dd>
+            </div>
+          ) : null}
           <div className="activity-view-row">
-            <dt>Duration</dt>
+            <dt>Donor / Prospect / Guest</dt>
             <dd>
-              {form.durationHours}h {form.durationMinutes}m
+              {form.otherPartyNames.some((n) => n.trim()) ? (
+                <ul className="activity-view-donor-list">
+                  {form.otherPartyNames
+                    .map((n) => n.trim())
+                    .filter(Boolean)
+                    .map((n, i) => (
+                      <li key={`${i}-${n}`}>{n}</li>
+                    ))}
+                </ul>
+              ) : (
+                '—'
+              )}
             </dd>
-          </div>
-          <div className="activity-view-row">
-            <dt>The other party&apos;s name</dt>
-            <dd>{form.otherPartyName || '—'}</dd>
           </div>
           <div className="activity-view-row">
             <dt>CRM Constituent No</dt>
@@ -287,40 +281,82 @@ export function ActivityReportViewPage({ user }: Props) {
             <dd className="activity-view-detail">{form.detail || '—'}</dd>
           </div>
           <div className="activity-view-row">
-            <dt>Attachment links</dt>
+            <dt>Attachments</dt>
             <dd>
-              {form.attachmentItems.filter((it) => it.url.trim()).length === 0 ? (
+              {attachmentList.length === 0 ? (
                 '—'
               ) : (
                 <ul className="activity-view-links">
-                  {form.attachmentItems
-                    .map((it, idx) => ({
-                      url: it.url.trim(),
-                      description: it.description.trim(),
-                      idx,
-                    }))
-                    .filter((it) => it.url)
-                    .map(({ url, description, idx }) => (
-                      <li key={`${idx}-${url}`} className="activity-view-attachment-item">
-                        {description ? (
-                          <p className="activity-view-attachment-desc">{description}</p>
+                  {attachmentList.map((it, idx) =>
+                    it.kind === 'link' && it.url.trim() ? (
+                      <li
+                        key={`${idx}-link`}
+                        className="activity-view-attachment-item"
+                      >
+                        {it.description.trim() ? (
+                          <p className="activity-view-attachment-desc">
+                            {it.description.trim()}
+                          </p>
                         ) : null}
                         <div className="activity-view-link-row">
-                          <a href={url} target="_blank" rel="noreferrer">
-                            {url}
+                          <a href={it.url.trim()} target="_blank" rel="noreferrer">
+                            {it.url.trim()}
                           </a>
                           <button
                             type="button"
                             className="activity-go-link-btn"
                             onClick={() => {
-                              window.open(url, '_blank', 'noopener,noreferrer')
+                              window.open(
+                                it.url.trim(),
+                                '_blank',
+                                'noopener,noreferrer',
+                              )
                             }}
                           >
                             Go to link
                           </button>
                         </div>
                       </li>
-                    ))}
+                    ) : it.kind === 'file' && it.storagePath.trim() ? (
+                      <li
+                        key={`${idx}-file`}
+                        className="activity-view-attachment-item"
+                      >
+                        {it.description.trim() ? (
+                          <p className="activity-view-attachment-desc">
+                            {it.description.trim()}
+                          </p>
+                        ) : null}
+                        <div className="activity-view-link-row">
+                          <span className="activity-view-file-label">
+                            {it.fileName || 'Attached file'}
+                          </span>
+                          <button
+                            type="button"
+                            className="activity-go-link-btn"
+                            disabled={downloadingPath === it.storagePath}
+                            onClick={() => {
+                              setDownloadingPath(it.storagePath)
+                              void (async () => {
+                                try {
+                                  await downloadStorageAttachmentToDevice(
+                                    it.storagePath,
+                                    it.fileName || 'download',
+                                  )
+                                } finally {
+                                  setDownloadingPath(null)
+                                }
+                              })()
+                            }}
+                          >
+                            {downloadingPath === it.storagePath
+                              ? '…'
+                              : 'Download'}
+                          </button>
+                        </div>
+                      </li>
+                    ) : null,
+                  )}
                 </ul>
               )}
             </dd>

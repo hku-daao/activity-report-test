@@ -1,27 +1,32 @@
 import type { User } from 'firebase/auth'
+import {
+  parseJsonAttachmentItems,
+  serializeAttachmentForDb,
+  type StorageAttachmentItem,
+} from './attachmentItems'
 import { profilesSupabase } from './profilesSupabase'
 import { fetchFirebaseUidsForEmails } from './profile'
 
 export type TeamFilterValue = '__all__' | string
-
-export type AttachmentItem = {
-  url: string
-  description: string
-}
 
 export type ActivityReportFormState = {
   title: string
   teamFilter: TeamFilterValue
   attendingStaffIds: (string | number)[]
   otherPeopleEnabled: boolean
+  /** Other colleagues not in the staff list — same split-into-rows UX as donors. */
   otherPeopleNames: string[]
-  otherPartyName: string
+  /** Donor / Prospect / Guest — one entry per person; stored in DB as newline-separated text. */
+  otherPartyNames: string[]
   crmConstituentNo: string
   eventDateTime: string
+  /** When true, duration fields are hidden; use `eventEndDateTime` instead. */
+  multipleDaysEvent: boolean
+  eventEndDateTime: string
   durationHours: number
   durationMinutes: number
   detail: string
-  attachmentItems: AttachmentItem[]
+  attachmentItems: StorageAttachmentItem[]
 }
 
 export type ActivityReportRow = {
@@ -36,11 +41,15 @@ export type ActivityReportRow = {
   other_party_name: string | null
   crm_constituent_no: string | null
   event_at: string | null
+  multiple_days_event?: boolean
+  event_end_at?: string | null
   duration_minutes: number
   detail: string
   attachment_urls: string[] | null
   /** Parallel to `attachment_urls`; may be absent on older rows. */
   attachment_descriptions?: string[] | null
+  /** New-format attachments (links + Firebase files). Prefer over legacy URL arrays when present. */
+  attachment_items?: unknown
   status: 'draft' | 'submitted'
   created_at: string
   updated_at: string
@@ -55,13 +64,15 @@ export function defaultFormState(): ActivityReportFormState {
     attendingStaffIds: [],
     otherPeopleEnabled: false,
     otherPeopleNames: [''],
-    otherPartyName: '',
+    otherPartyNames: [''],
     crmConstituentNo: '',
     eventDateTime: '',
+    multipleDaysEvent: false,
+    eventEndDateTime: '',
     durationHours: 1,
     durationMinutes: 0,
     detail: '',
-    attachmentItems: [{ url: '', description: '' }],
+    attachmentItems: [],
   }
 }
 
@@ -105,6 +116,20 @@ export function clearDraftClientStorage(uid: string): void {
   saveDraftRowIdToStorage(uid, null)
 }
 
+/** Parse stored `other_party_name` (newline-separated) into one row per name. */
+export function otherPartyNamesFromDb(text: string | null | undefined): string[] {
+  const raw = text?.trim()
+  if (!raw) return ['']
+  const lines = raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+  return lines.length > 0 ? lines : ['']
+}
+
+/** Serialize donor/guest names for `other_party_name`. */
+export function otherPartyNamesToDb(names: string[]): string | null {
+  const lines = names.map((s) => s.trim()).filter(Boolean)
+  return lines.length > 0 ? lines.join('\n') : null
+}
+
 export function mergeWithDefaults(
   partial: Partial<ActivityReportFormState> | null,
 ): ActivityReportFormState {
@@ -112,8 +137,21 @@ export function mergeWithDefaults(
   if (!partial) return base
   const legacy = partial as Partial<ActivityReportFormState> & {
     attachmentUrls?: string[]
+    otherPartyName?: string
   }
-  const { attachmentUrls: _legacyUrls, ...restPartial } = legacy
+  const { attachmentUrls: _legacyUrls, otherPartyName: _legacyPartyLine, ...restPartial } =
+    legacy
+  const otherPartyNamesFromPartial = (): string[] => {
+    if (Array.isArray(partial.otherPartyNames)) {
+      return partial.otherPartyNames.length > 0
+        ? partial.otherPartyNames.map((s) => String(s))
+        : ['']
+    }
+    if (typeof _legacyPartyLine === 'string' && _legacyPartyLine.trim()) {
+      return otherPartyNamesFromDb(_legacyPartyLine)
+    }
+    return base.otherPartyNames
+  }
   return {
     ...base,
     ...restPartial,
@@ -126,8 +164,17 @@ export function mergeWithDefaults(
       partial.otherPeopleNames.length > 0
         ? partial.otherPeopleNames
         : base.otherPeopleNames,
+    otherPartyNames: otherPartyNamesFromPartial(),
     attachmentItems:
       normalizeAttachmentItemsFromPartial(legacy) ?? base.attachmentItems,
+    multipleDaysEvent:
+      typeof partial.multipleDaysEvent === 'boolean'
+        ? partial.multipleDaysEvent
+        : base.multipleDaysEvent,
+    eventEndDateTime:
+      typeof partial.eventEndDateTime === 'string'
+        ? partial.eventEndDateTime
+        : base.eventEndDateTime,
   }
 }
 
@@ -138,16 +185,29 @@ function normalizeAttachmentItemsFromPartial(
     Array.isArray(partial.attachmentItems) &&
     partial.attachmentItems.length > 0
   ) {
-    return partial.attachmentItems.map((x) => ({
-      url: typeof x?.url === 'string' ? x.url : '',
-      description: typeof x?.description === 'string' ? x.description : '',
-    }))
+    const first = partial.attachmentItems[0] as unknown
+    if (
+      first &&
+      typeof first === 'object' &&
+      'kind' in (first as Record<string, unknown>)
+    ) {
+      return partial.attachmentItems as StorageAttachmentItem[]
+    }
+    return (partial.attachmentItems as { url?: string; description?: string }[]).map(
+      (x) => ({
+        kind: 'link' as const,
+        url: typeof x?.url === 'string' ? x.url : '',
+        description:
+          typeof x?.description === 'string' ? x.description : '',
+      }),
+    )
   }
   if (
     Array.isArray(partial.attachmentUrls) &&
     partial.attachmentUrls.length > 0
   ) {
     return partial.attachmentUrls.map((url) => ({
+      kind: 'link' as const,
       url: typeof url === 'string' ? url : '',
       description: '',
     }))
@@ -178,7 +238,7 @@ export function parseAttendingIds(raw: unknown): (string | number)[] {
   return []
 }
 
-/** Normalizes other_people_names from DB (array, or occasional string/JSON). */
+/** Normalizes other_people_names (other colleagues) from DB (array, or occasional string/JSON). */
 export function parseOtherPeopleNamesFromRow(
   row: ActivityReportRow,
 ): string[] {
@@ -218,9 +278,11 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
     otherPeopleEnabled:
       Boolean(row.other_people_enabled) || otherNames.length > 0,
     otherPeopleNames: otherNames.length > 0 ? otherNames : [''],
-    otherPartyName: row.other_party_name ?? '',
+    otherPartyNames: otherPartyNamesFromDb(row.other_party_name),
     crmConstituentNo: row.crm_constituent_no ?? '',
     eventDateTime: isoToDatetimeLocal(row.event_at),
+    multipleDaysEvent: Boolean(row.multiple_days_event),
+    eventEndDateTime: isoToDatetimeLocal(row.event_end_at ?? null),
     durationHours: hours,
     durationMinutes: minutes,
     detail: row.detail ?? '',
@@ -228,38 +290,49 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
   }
 }
 
-function attachmentItemsFromRow(row: ActivityReportRow): AttachmentItem[] {
+export function attachmentItemsFromRow(
+  row: ActivityReportRow,
+): StorageAttachmentItem[] {
+  const parsed = parseJsonAttachmentItems(row.attachment_items)
+  if (parsed && parsed.length > 0) {
+    return parsed
+  }
   const urls = row.attachment_urls ?? []
   const descs = row.attachment_descriptions ?? []
   if (urls.length === 0 && descs.length === 0) {
-    return [{ url: '', description: '' }]
+    return []
   }
   const n = Math.max(urls.length, descs.length)
   return Array.from({ length: n }, (_, i) => ({
+    kind: 'link' as const,
     url: urls[i] != null ? String(urls[i]) : '',
     description: descs[i] != null ? String(descs[i]) : '',
   }))
 }
 
-function buildRowPayload(
-  user: User,
-  state: ActivityReportFormState,
-  status: 'draft' | 'submitted',
-) {
-  const durationMinutes = Math.max(
+function computeDurationMinutes(state: ActivityReportFormState): number {
+  if (state.multipleDaysEvent) {
+    if (!state.eventDateTime.trim() || !state.eventEndDateTime.trim()) {
+      return 0
+    }
+    const start = new Date(state.eventDateTime).getTime()
+    const end = new Date(state.eventEndDateTime).getTime()
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return 0
+    }
+    return Math.max(0, Math.floor((end - start) / 60000))
+  }
+  return Math.max(
     0,
-    (Number(state.durationHours) || 0) * 60 + (Number(state.durationMinutes) || 0),
+    (Number(state.durationHours) || 0) * 60 +
+      (Number(state.durationMinutes) || 0),
   )
+}
 
-  const attachmentPairs = state.attachmentItems
-    .map((item) => ({
-      url: item.url.trim(),
-      description: item.description.trim(),
-    }))
-    .filter((p) => p.url !== '')
+function buildRowPayload(user: User, state: ActivityReportFormState) {
+  const durationMinutes = computeDurationMinutes(state)
 
-  const attachment_urls = attachmentPairs.map((p) => p.url)
-  const attachment_descriptions = attachmentPairs.map((p) => p.description)
+  const serializedAttachments = serializeAttachmentForDb(state.attachmentItems)
 
   const otherPeopleNames = state.otherPeopleEnabled
     ? state.otherPeopleNames.map((n) => n.trim()).filter(Boolean)
@@ -273,16 +346,23 @@ function buildRowPayload(
     attending_staff_ids: state.attendingStaffIds.map((id) => String(id)),
     other_people_enabled: state.otherPeopleEnabled,
     other_people_names: otherPeopleNames,
-    other_party_name: state.otherPartyName.trim() || null,
+    other_party_name: otherPartyNamesToDb(state.otherPartyNames),
     crm_constituent_no: state.crmConstituentNo.trim() || null,
     event_at: state.eventDateTime
       ? new Date(state.eventDateTime).toISOString()
       : null,
+    multiple_days_event: state.multipleDaysEvent,
+    event_end_at:
+      state.multipleDaysEvent && state.eventEndDateTime.trim()
+        ? new Date(state.eventEndDateTime).toISOString()
+        : null,
     duration_minutes: durationMinutes,
     detail: state.detail.trim(),
-    attachment_urls,
-    attachment_descriptions,
-    status,
+    attachment_items:
+      serializedAttachments.length > 0 ? serializedAttachments : [],
+    attachment_urls: [] as string[],
+    attachment_descriptions: [] as string[],
+    status: 'submitted' as const,
     updated_at: new Date().toISOString(),
   }
 }
@@ -452,7 +532,7 @@ export async function saveOrUpdateDraftInSupabase(
     }
   }
 
-  const payload = buildRowPayload(user, state, 'draft')
+  const payload = buildRowPayload(user, state)
 
   if (existingDraftId) {
     const { data, error } = await profilesSupabase
@@ -491,96 +571,6 @@ export async function saveOrUpdateDraftInSupabase(
   return { ok: true, id: data.id as string }
 }
 
-export async function submitActivityReportToSupabase(
-  user: User,
-  state: ActivityReportFormState,
-  options?: { draftRowId: string | null },
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!profilesSupabase) {
-    return {
-      ok: false,
-      message:
-        'Profiles Supabase is not configured; cannot submit to the server.',
-    }
-  }
-
-  const payload = buildRowPayload(user, state, 'submitted')
-  const draftId = options?.draftRowId?.trim() || null
-
-  /**
-   * Promote the existing draft row in place. The old flow inserted a new “submitted”
-   * row and hard-deleted the draft; if DELETE failed (e.g. RLS), two rows remained.
-   */
-  if (draftId) {
-    const rid = draftId.trim()
-
-    const existing = await fetchActivityReportById(rid)
-    if (!existing.ok) {
-      return { ok: false, message: existing.message }
-    }
-
-    const rowUid = String(existing.row.firebase_uid ?? '').trim()
-    if (rowUid !== user.uid.trim()) {
-      return { ok: false, message: 'You can only submit your own drafts.' }
-    }
-    if (existing.row.deleted_at) {
-      return { ok: false, message: 'This draft was deleted.' }
-    }
-    if (existing.row.status === 'submitted') {
-      return { ok: true }
-    }
-    if (existing.row.status !== 'draft') {
-      return {
-        ok: false,
-        message: 'This report is not an unsubmitted draft.',
-      }
-    }
-
-    // Use DB-stored uid in filters (must match soft delete / save draft paths).
-    // Avoid .select() here: UPDATE … RETURNING can be empty under some RLS setups.
-    const { error: updErr } = await profilesSupabase
-      .from('activity_reports')
-      .update(payload)
-      .eq('id', rid)
-      .eq('firebase_uid', rowUid)
-      .eq('status', 'draft')
-
-    if (updErr) {
-      return { ok: false, message: updErr.message }
-    }
-
-    const verify = await fetchActivityReportById(rid)
-    if (verify.ok && verify.row.status === 'submitted') {
-      return { ok: true }
-    }
-    if (verify.ok && verify.row.status === 'draft') {
-      return {
-        ok: false,
-        message:
-          'Could not submit this draft (no rows updated). Check that your Profiles database allows UPDATE on activity_reports.',
-      }
-    }
-    // Row no longer visible or status unclear — often SELECT RLS hiding “submitted” rows.
-    if (!verify.ok) {
-      return { ok: true }
-    }
-
-    return {
-      ok: false,
-      message:
-        'Could not submit this draft. Try again or refresh the page.',
-    }
-  }
-
-  const { error } = await profilesSupabase.from('activity_reports').insert(payload)
-
-  if (error) {
-    return { ok: false, message: error.message }
-  }
-
-  return { ok: true }
-}
-
 export function reportMatchesSearch(
   row: ActivityReportRow,
   q: string,
@@ -588,6 +578,7 @@ export function reportMatchesSearch(
 ): boolean {
   const s = q.trim().toLowerCase()
   if (!s) return true
+  const attItems = attachmentItemsFromRow(row)
   const hay = [
     row.title,
     row.detail,
@@ -596,6 +587,7 @@ export function reportMatchesSearch(
     creatorFullName,
     ...(row.attachment_urls ?? []),
     ...(row.attachment_descriptions ?? []),
+    JSON.stringify(attItems),
   ]
     .filter(Boolean)
     .join('\n')

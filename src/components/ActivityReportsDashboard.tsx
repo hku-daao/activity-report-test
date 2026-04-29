@@ -172,29 +172,17 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
 
   const reportHref = (row: ActivityReportRow): string => {
     if (isDeleted(row)) return `/activity/${row.id}`
-    if (row.status === 'draft' && row.firebase_uid === user.uid) {
+    if (row.firebase_uid === user.uid) {
       return `/activity/${row.id}/edit`
     }
     return `/activity/${row.id}`
   }
 
-  function statusLabel(row: ActivityReportRow, deleted: boolean): string {
-    if (deleted) return 'Deleted'
-    if (row.status === 'submitted') return 'Submitted'
-    return 'Unsubmitted'
-  }
-
-  function statusClassName(row: ActivityReportRow, deleted: boolean): string {
-    if (deleted) return 'activity-report-status is-record-deleted'
-    if (row.status === 'submitted') {
-      return 'activity-report-status is-submitted'
-    }
-    return 'activity-report-status is-draft'
-  }
-
   return (
     <section className="dashboard-panel activity-dashboard">
-      <h2 className="dashboard-section-title">Activity reports</h2>
+      <h2 className="dashboard-section-title">
+        Meeting / Engagement / Activity reports
+      </h2>
 
       <div className="activity-dashboard-controls">
         <label className="activity-dashboard-field">
@@ -273,9 +261,6 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
                 >
                   <span className="activity-report-title">
                     {row.title?.trim() || 'Untitled activity'}
-                  </span>
-                  <span className={statusClassName(row, deleted)}>
-                    {statusLabel(row, deleted)}
                   </span>
                   <span className="activity-report-meta">
                     Updated {formatWhen(row.updated_at)}

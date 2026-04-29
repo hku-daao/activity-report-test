@@ -1,0 +1,104 @@
+### 2026-04-27 ###
+
+after login, put the next before the logout button, and remove the session "your information". The whole dashboard will be moved to another page. This page will only be shown after clicking a newly created button "View Acitivity Reports". The first page should be renamed to "Activity Report: Home". "Create Activity Report" button should be renamed to "New: Meeting / Engagement / Activity Report"
+
+Name of the login user, orginally at the "your information" session, should be put before logout button.
+
+There should be a back button other than the home page. Other links, such as "View Activity Reports", "New: Meeting..." at the top bar should be removed.
+
+At the "New: Meeting / Engagement / Activity Report" page, Add a checkbox of "multiple days event". If it's checked, then hide the duration part. And then add "End Date/Time" for user to select with. Rename "The other party's name:" to "Donor / Prospect / Guest:" and make it a multiple line box. Remove the "Submit" button, and there should no longer be status such as "submitted / draft / unsubmitted". User can always edit.
+
+For the "Donor / Prospect / Guest" box, user can input names in multiple lines, one name per line. Then add a split name button. After clicking the buttons, then split the names input multiple boxes.
+
+Do the same with "Other People" field. And rename "Other People" to "Other colleagues"
+
+When I click on "Split names", it should add on top of the current list, instead of replacing them.
+
+At home page, add a button call "Daily Journal" before "New: Meeting...". The button "View Activity Reports" should move to the bottom. For the "Daily Journal" function, it should call a page and create an entry with title "Journal of yyyy-mm-dd", where yyyy-mm-dd is today's day. Then it will provide a multiple line freetext box for user to enter. The system will allow user to "save". When people click "Daily Journal" but today's Journal has already created, then the system will automatically call the existing today's journal for further editing instead of creating another entry. The system should also record who's the creator. Then at home page, add a button "View Journal" before "View Activity Reports", and it will call a dashboard page to show all the created journal.
+
+Add another button call "Proactive initiative and Activity", this function is similar to "Daily Journal", but the title is entered by the user instead of freely generated. A separate dashboard should be created. At home page, all dashboard buttons should be group into "Dashboard", the other buttons group into "Create New".
+
+Create New session of home page should be at the top.
+
+"View Activity Reports" should be renamed to "View Meeting / Engagement / Activity Reports". "New: Meeting / Engagement / Activity Reports" should be renamed to "Meeting / Engagement / Activity Reports". "Proactive initiative and Activity" should be renamed to "Proactive Initiative and Activity". "View proactive initiative and activities" should be renamed to "View Proactive Initiative and Activity".
+
+All buttons in "Create New" session should use same color tone of "Daily Journal".
+
+
+
+### 2026-04-28 ###
+
+For the edit page insert "attachment link" function. Other than user enters attachment links, please add an option allowing user to upload their own files in PC or mobile phones. It should connect to Firebase storage, folder configurable in .env file. The download links should not be viewable to user for security reason. 
+
+what should be configured at VITE_FIREBASE_STORAGE_ATTACHMENTS_PREFIX
+
+how to fix "Firebase Storage: User does not have permission to access 'activity_report/giWdsfmikvQJqxHGT5hjuaiyEtW2/proactive/381c201b-b6a2-4f39-b798-2880ca956685/1777343161495_test.txt'. (storage/unauthorized)"
+
+after i upload a file and click download, there is no file downloaded. And when I go back to home page and back to specific entries, the upload file list disapear at all. 
+
+after i click upload file, then it should auto save into DB. and download button is still not working.
+
+The download function is neither working in windows or mobile browser.
+
+Download did open at another tab this time, but still not triggering any download file action.
+
+No, i still don't see download action triggered
+
+error in web-brower: Access to XMLHttpRequest at 'https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…201b-b6a2-4f39-b798-2880ca956685%2F1777343749127_test_excel.xlsx?alt=media' from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+proactiveAttachmentStorage.ts:66 
+ GET https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…201b-b6a2-4f39-b798-2880ca956685%2F1777343749127_test_excel.xlsx?alt=media net::ERR_FAILED 304 (Not Modified)
+await in makeRequestWithTokens		
+getBlobData	@	proactiveAttachmentStorage.ts:66
+(anonymous)	@	proactiveAttachmentStorage.ts:166
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:636
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:657
+
+still error: 381c201b-b6a2-4f39-b798-2880ca956685:1 Access to fetch at 'https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…edia&token=c8853b60-8a27-4478-8cd8-ebe5b9eb2020&_dlcb=1777345030710=717659' from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+proactiveAttachmentStorage.ts:70 
+ GET https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…edia&token=c8853b60-8a27-4478-8cd8-ebe5b9eb2020&_dlcb=1777345030710=717659 net::ERR_FAILED 200 (OK)
+getBlobData	@	proactiveAttachmentStorage.ts:70
+await in getBlobData		
+(anonymous)	@	proactiveAttachmentStorage.ts:162
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:636
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:657
+<button>		
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:622
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:335
+<ProactiveInitiativeEditorPage>		
+App	@	App.tsx:115
+<App>		
+(anonymous)	@	main.tsx:8
+
+Error: 381c201b-b6a2-4f39-b798-2880ca956685:1 Access to XMLHttpRequest at 'https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…201b-b6a2-4f39-b798-2880ca956685%2F1777343749127_test_excel.xlsx?alt=media' from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+proactiveAttachmentStorage.ts:90 
+ GET https://firebasestorage.googleapis.com/v0/b/daao-a20c6.firebasestorage.app/…201b-b6a2-4f39-b798-2880ca956685%2F1777343749127_test_excel.xlsx?alt=media net::ERR_FAILED 304 (Not Modified)
+await in makeRequestWithTokens		
+tryGetBytes	@	proactiveAttachmentStorage.ts:90
+(anonymous)	@	proactiveAttachmentStorage.ts:167
+await in (anonymous)		
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:636
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:657
+<button>		
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:622
+(anonymous)	@	ProactiveInitiativeEditorPage.tsx:335
+<ProactiveInitiativeEditorPage>		
+App	@	App.tsx:115
+<App>		
+(anonymous)	@	main.tsx:8
+
+download is still not working. please build a simple download function without any restrictions but works first
+
+remove the wording: You can add external links or upload a file. Uploads are stored under the folder from VITE_FIREBASE_STORAGE_ATTACHMENTS_PREFIX in your bucket. File links are not displayed for security — use Download.
+
+add the same attachment function to "Daily Journal" and also replace the attachment link function in "Meeting / Engagement / Activity Reports" with the attachment link function of "Proactive Initiative and Activity"
+
+Title "Edit activity report" should change to "Meeting / Engagement / Activity Reports"
+
+For the "Meeting / Engagement / Activity Reports", change to allowing "save" at anytime
+
+for the "split name" function, other than blindly add names into current ones, also remove those empty name box
+
+
+
+### 2026-04-29 ###
+

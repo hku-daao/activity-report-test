@@ -1,0 +1,33 @@
+### for run the webapp
+npm run dev   
+
+
+### for git hub 
+cd d:\Development\Activity_Report
+git init
+git add .
+git commit -m "Initial for activity report test"
+git branch -M main
+git remote add origin https://github.com/hku-daao/activity-report-test.git
+git push -u origin main
+
+
+### Replace the URL with your real repo. After that, “putting on GitHub” is just git add / commit / push for changes.
+
+
+git remote -v
+git remote set-url origin https://github.com/hku-daao/activity-report-test.git
+git remote -v
+
+git push -u origin main
+
+firebase deploy --only hosting:activity-report-test --project daao-a20c6
+
+firebase target:apply hosting activity-report-test daao-a20c6
+firebase deploy --only hosting
+
+
+
+
+
+npx -y firebase-tools@latest deploy --only hosting:activity-report-test

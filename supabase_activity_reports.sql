@@ -71,6 +71,17 @@ alter table public.activity_reports add column if not exists attachment_descript
 -- Soft delete (dashboard hides unless “show deleted”)
 alter table public.activity_reports add column if not exists deleted_at timestamptz;
 
+-- Multi-day events (optional end time; duration hidden in UI when enabled)
+alter table public.activity_reports add column if not exists multiple_days_event boolean not null default false;
+alter table public.activity_reports add column if not exists event_end_at timestamptz;
+
+-- Structured attachments (links + Firebase file refs); legacy `attachment_urls` / `attachment_descriptions` kept empty when saving from the current app.
+alter table public.activity_reports
+  add column if not exists attachment_items jsonb not null default '[]'::jsonb;
+
+-- Promote legacy drafts so they behave as normal editable reports (app saves status = submitted only)
+update public.activity_reports set status = 'submitted' where status = 'draft';
+
 create index if not exists activity_reports_deleted_at_idx
   on public.activity_reports (deleted_at)
   where deleted_at is not null;

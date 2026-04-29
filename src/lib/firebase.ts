@@ -1,5 +1,6 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { getAuth, type Auth } from 'firebase/auth'
+import { getStorage, type FirebaseStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -19,12 +20,23 @@ export function isFirebaseConfigured(): boolean {
   )
 }
 
+/** When set, the client can use Firebase Storage (e.g. attachments). */
+export function isFirebaseStorageBucketConfigured(): boolean {
+  return Boolean(
+    isFirebaseConfigured() && String(firebaseConfig.storageBucket || '').trim(),
+  )
+}
+
 let app: FirebaseApp | undefined
 let auth: Auth | undefined
+let storage: FirebaseStorage | undefined
 
 if (isFirebaseConfigured()) {
   app = initializeApp(firebaseConfig)
   auth = getAuth(app)
+  if (isFirebaseStorageBucketConfigured() && app) {
+    storage = getStorage(app)
+  }
 }
 
-export { auth }
+export { auth, storage, app as firebaseApp }
