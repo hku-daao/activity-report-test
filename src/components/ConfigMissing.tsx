@@ -1,7 +1,10 @@
+import { AppLogo } from './AppLogo'
+
 export function ConfigMissing() {
   return (
     <div className="auth-shell">
       <header className="auth-header">
+        <AppLogo variant="auth" />
         <h1 className="auth-title">Configuration needed</h1>
         <p className="auth-subtitle">
           Add Firebase and Supabase variables to a <code>.env</code> file in the

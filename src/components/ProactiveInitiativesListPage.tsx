@@ -11,6 +11,7 @@ import {
   listProactiveInitiativesForUser,
   type ProactiveInitiativeRow,
 } from '../lib/proactiveInitiatives'
+import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 
 type Props = {
@@ -77,6 +78,7 @@ export function ProactiveInitiativesListPage({ user }: Props) {
     <div className="dashboard-page">
       <header className="dashboard-topbar">
         <div className="dashboard-topbar-start">
+          <AppLogo />
           <SessionBackButton />
           <h1 className="dashboard-brand">
             Proactive Initiative and Activity

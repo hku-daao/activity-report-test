@@ -15,6 +15,7 @@ import {
   type DailyJournalRow,
 } from '../lib/dailyJournals'
 import { deleteStorageAttachment } from '../lib/proactiveAttachmentStorage'
+import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 import { StorageAttachmentField } from './StorageAttachmentField'
 
@@ -177,7 +178,10 @@ export function DailyJournalPage({ user }: Props) {
       <header className="dashboard-topbar">
         <div className="activity-topbar-left">
           <SessionBackButton />
-          <h1 className="dashboard-brand">Daily journal</h1>
+          <div className="app-brand-lockup">
+            <AppLogo />
+            <h1 className="dashboard-brand">Daily journal</h1>
+          </div>
         </div>
         <div className="dashboard-topbar-end">
           <SessionUserBeforeLogout label={sessionUserName} />

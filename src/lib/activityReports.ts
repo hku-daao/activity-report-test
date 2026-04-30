@@ -18,6 +18,14 @@ export type ActivityReportFormState = {
   otherPeopleNames: string[]
   /** Donor / Prospect / Guest — one entry per person; stored in DB as newline-separated text. */
   otherPartyNames: string[]
+  /** First name per donor row; aligned with `otherPartyLastNames`. Combined line for DB is derived. */
+  otherPartyFirstNames: string[]
+  /** Last name / family name per donor row. */
+  otherPartyLastNames: string[]
+  /** Honorific / title per row (from Split names); aligned by index with `otherPartyNames`. */
+  otherPartyTitles: string[]
+  /** CRM constituent (lookup) id per name row; aligned by index with `otherPartyNames`. */
+  otherPartyConstituentIds: string[]
   crmConstituentNo: string
   eventDateTime: string
   /** When true, duration fields are hidden; use `eventEndDateTime` instead. */
@@ -39,6 +47,10 @@ export type ActivityReportRow = {
   /** Postgres `text[]`; may deserialize oddly — use `parseOtherPeopleNamesFromRow`. */
   other_people_names: unknown
   other_party_name: string | null
+  /** Parallel to each non-blank line in `other_party_name` (order preserved). */
+  other_party_constituent_ids?: string[] | null
+  /** Parallel honorific/title per line (optional). */
+  other_party_titles?: string[] | null
   crm_constituent_no: string | null
   event_at: string | null
   multiple_days_event?: boolean
@@ -65,6 +77,10 @@ export function defaultFormState(): ActivityReportFormState {
     otherPeopleEnabled: false,
     otherPeopleNames: [''],
     otherPartyNames: [''],
+    otherPartyFirstNames: [''],
+    otherPartyLastNames: [''],
+    otherPartyTitles: [''],
+    otherPartyConstituentIds: [''],
     crmConstituentNo: '',
     eventDateTime: '',
     multipleDaysEvent: false,
@@ -124,10 +140,142 @@ export function otherPartyNamesFromDb(text: string | null | undefined): string[]
   return lines.length > 0 ? lines : ['']
 }
 
+/** Split one stored name line: last word is last name; all preceding words are first name. */
+export function splitStoredPartyLine(nameLine: string): {
+  first: string
+  last: string
+} {
+  const t = nameLine.trim().replace(/\s+/g, ' ')
+  if (!t) return { first: '', last: '' }
+  const parts = t.split(' ')
+  if (parts.length === 1) {
+    return { first: parts[0] ?? '', last: '' }
+  }
+  const last = parts[parts.length - 1] ?? ''
+  const first = parts.slice(0, -1).join(' ')
+  return { first, last }
+}
+
+/** Join first + last for a single stored line (matches how rows are saved). */
+export function combinePartyFirstLast(first: string, last: string): string {
+  const f = first.trim()
+  const l = last.trim()
+  if (f && l) return `${f} ${l}`
+  return f || l
+}
+
 /** Serialize donor/guest names for `other_party_name`. */
 export function otherPartyNamesToDb(names: string[]): string | null {
   const lines = names.map((s) => s.trim()).filter(Boolean)
   return lines.length > 0 ? lines.join('\n') : null
+}
+
+function parseOtherPartyConstituentIdsFromRow(
+  row: Pick<ActivityReportRow, 'other_party_constituent_ids'>,
+): string[] {
+  const raw = row.other_party_constituent_ids
+  if (raw == null) return []
+  if (Array.isArray(raw)) {
+    return raw.map((x) => (x == null ? '' : String(x).trim()))
+  }
+  return []
+}
+
+/** Pads or trims so `ids[i]` lines up with `otherPartyNames[i]`. */
+export function alignConstituentIdsToPartyNames(
+  otherPartyNames: string[],
+  ids: string[],
+): string[] {
+  const n = otherPartyNames.length
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    out.push((ids[i] ?? '').trim())
+  }
+  return out
+}
+
+/** Pads or trims so `titles[i]` lines up with `otherPartyNames[i]`. */
+export function alignTitlesToPartyNames(
+  otherPartyNames: string[],
+  titles: string[],
+): string[] {
+  const n = otherPartyNames.length
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    out.push((titles[i] ?? '').trim())
+  }
+  return out
+}
+
+/** Pads or trims string arrays to `rowCount` donor rows. */
+export function alignPartyFieldRows(rowCount: number, values: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < rowCount; i++) {
+    out.push((values[i] ?? '').trim())
+  }
+  return out
+}
+
+/** Keeps `otherPartyNames[i]` in sync with first + last fields. */
+export function syncOtherPartyNamesFromFirstLast(
+  first: string[],
+  last: string[],
+): string[] {
+  const n = Math.max(first.length, last.length)
+  const out: string[] = []
+  for (let i = 0; i < n; i++) {
+    out.push(combinePartyFirstLast(first[i] ?? '', last[i] ?? ''))
+  }
+  return out
+}
+
+function parseOtherPartyTitlesFromRow(
+  row: Pick<ActivityReportRow, 'other_party_titles'>,
+): string[] {
+  const raw = row.other_party_titles
+  if (raw == null) return []
+  if (Array.isArray(raw)) {
+    return raw.map((x) => (x == null ? '' : String(x).trim()))
+  }
+  return []
+}
+
+/** Pairs only non-blank name rows; same order for DB arrays and newline text. */
+export function zipOtherPartyNameAndConstituentIds(
+  otherPartyFirstNames: string[],
+  otherPartyLastNames: string[],
+  otherPartyConstituentIds: string[],
+  otherPartyTitles: string[],
+): {
+  namesText: string | null
+  idArray: string[] | null
+  titlesArray: string[] | null
+} {
+  const pairs: { name: string; id: string; title: string }[] = []
+  const n = Math.max(
+    otherPartyFirstNames.length,
+    otherPartyLastNames.length,
+  )
+  for (let i = 0; i < n; i++) {
+    const name = combinePartyFirstLast(
+      otherPartyFirstNames[i] ?? '',
+      otherPartyLastNames[i] ?? '',
+    ).trim()
+    if (!name) continue
+    pairs.push({
+      name,
+      id: (otherPartyConstituentIds[i] ?? '').trim(),
+      title: (otherPartyTitles[i] ?? '').trim(),
+    })
+  }
+  if (pairs.length === 0) {
+    return { namesText: null, idArray: null, titlesArray: null }
+  }
+  return {
+    namesText: pairs.map((p) => p.name).join('\n'),
+    idArray: pairs.map((p) => p.id),
+    titlesArray: pairs.map((p) => p.title),
+  }
 }
 
 export function mergeWithDefaults(
@@ -152,6 +300,49 @@ export function mergeWithDefaults(
     }
     return base.otherPartyNames
   }
+  const otherPartyNamesResolved = otherPartyNamesFromPartial()
+  const nParty = otherPartyNamesResolved.length
+  const fromStoredLines = otherPartyNamesResolved.map((line) =>
+    splitStoredPartyLine(line),
+  )
+  const otherPartyFirstNamesResolved =
+    Array.isArray(partial.otherPartyFirstNames) &&
+    partial.otherPartyFirstNames.length > 0
+      ? alignPartyFieldRows(
+          nParty,
+          partial.otherPartyFirstNames.map((s) => String(s)),
+        )
+      : fromStoredLines.map((p) => p.first)
+  const otherPartyLastNamesResolved =
+    Array.isArray(partial.otherPartyLastNames) &&
+    partial.otherPartyLastNames.length > 0
+      ? alignPartyFieldRows(
+          nParty,
+          partial.otherPartyLastNames.map((s) => String(s)),
+        )
+      : fromStoredLines.map((p) => p.last)
+  const otherPartyNamesSynced = syncOtherPartyNamesFromFirstLast(
+    otherPartyFirstNamesResolved,
+    otherPartyLastNamesResolved,
+  )
+  const otherPartyConstituentIdsFromPartial = (): string[] => {
+    if (Array.isArray(partial.otherPartyConstituentIds)) {
+      return alignConstituentIdsToPartyNames(
+        otherPartyNamesSynced,
+        partial.otherPartyConstituentIds,
+      )
+    }
+    return alignConstituentIdsToPartyNames(otherPartyNamesSynced, [])
+  }
+  const otherPartyTitlesFromPartial = (): string[] => {
+    if (Array.isArray(partial.otherPartyTitles)) {
+      return alignTitlesToPartyNames(
+        otherPartyNamesSynced,
+        partial.otherPartyTitles,
+      )
+    }
+    return alignTitlesToPartyNames(otherPartyNamesSynced, [])
+  }
   return {
     ...base,
     ...restPartial,
@@ -164,7 +355,11 @@ export function mergeWithDefaults(
       partial.otherPeopleNames.length > 0
         ? partial.otherPeopleNames
         : base.otherPeopleNames,
-    otherPartyNames: otherPartyNamesFromPartial(),
+    otherPartyNames: otherPartyNamesSynced,
+    otherPartyFirstNames: otherPartyFirstNamesResolved,
+    otherPartyLastNames: otherPartyLastNamesResolved,
+    otherPartyTitles: otherPartyTitlesFromPartial(),
+    otherPartyConstituentIds: otherPartyConstituentIdsFromPartial(),
     attachmentItems:
       normalizeAttachmentItemsFromPartial(legacy) ?? base.attachmentItems,
     multipleDaysEvent:
@@ -271,6 +466,11 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
     row.team_filter === 'all' ? '__all__' : String(row.team_filter)
   const otherNames = parseOtherPeopleNamesFromRow(row)
 
+  const partyLines = otherPartyNamesFromDb(row.other_party_name)
+  const splits = partyLines.map((line) => splitStoredPartyLine(line))
+  const firstArr = splits.map((s) => s.first)
+  const lastArr = splits.map((s) => s.last)
+  const partyNames = syncOtherPartyNamesFromFirstLast(firstArr, lastArr)
   return {
     title: row.title?.trim() ?? '',
     teamFilter,
@@ -278,7 +478,17 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
     otherPeopleEnabled:
       Boolean(row.other_people_enabled) || otherNames.length > 0,
     otherPeopleNames: otherNames.length > 0 ? otherNames : [''],
-    otherPartyNames: otherPartyNamesFromDb(row.other_party_name),
+    otherPartyNames: partyNames,
+    otherPartyFirstNames: firstArr,
+    otherPartyLastNames: lastArr,
+    otherPartyTitles: alignTitlesToPartyNames(
+      partyNames,
+      parseOtherPartyTitlesFromRow(row),
+    ),
+    otherPartyConstituentIds: alignConstituentIdsToPartyNames(
+      partyNames,
+      parseOtherPartyConstituentIdsFromRow(row),
+    ),
     crmConstituentNo: row.crm_constituent_no ?? '',
     eventDateTime: isoToDatetimeLocal(row.event_at),
     multipleDaysEvent: Boolean(row.multiple_days_event),
@@ -337,6 +547,12 @@ function buildRowPayload(user: User, state: ActivityReportFormState) {
   const otherPeopleNames = state.otherPeopleEnabled
     ? state.otherPeopleNames.map((n) => n.trim()).filter(Boolean)
     : []
+  const partyZip = zipOtherPartyNameAndConstituentIds(
+    state.otherPartyFirstNames,
+    state.otherPartyLastNames,
+    state.otherPartyConstituentIds,
+    state.otherPartyTitles,
+  )
 
   return {
     firebase_uid: user.uid,
@@ -346,7 +562,9 @@ function buildRowPayload(user: User, state: ActivityReportFormState) {
     attending_staff_ids: state.attendingStaffIds.map((id) => String(id)),
     other_people_enabled: state.otherPeopleEnabled,
     other_people_names: otherPeopleNames,
-    other_party_name: otherPartyNamesToDb(state.otherPartyNames),
+    other_party_name: partyZip.namesText,
+    other_party_constituent_ids: partyZip.idArray ?? [],
+    other_party_titles: partyZip.titlesArray ?? [],
     crm_constituent_no: state.crmConstituentNo.trim() || null,
     event_at: state.eventDateTime
       ? new Date(state.eventDateTime).toISOString()
@@ -584,6 +802,8 @@ export function reportMatchesSearch(
     row.detail,
     row.other_party_name,
     row.crm_constituent_no,
+    (row.other_party_constituent_ids ?? []).join('\n'),
+    (row.other_party_titles ?? []).join('\n'),
     creatorFullName,
     ...(row.attachment_urls ?? []),
     ...(row.attachment_descriptions ?? []),

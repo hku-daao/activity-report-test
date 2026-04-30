@@ -112,3 +112,12 @@ end;
 $$;
 
 grant execute on function public.soft_delete_activity_report(uuid, text) to anon;
+
+-- Per line under Donor / Prospect / Guest (order matches `other_party_name` lines).
+-- Constituent lookup: see `supabase_constituent_lookup.sql`.
+alter table public.activity_reports
+  add column if not exists other_party_constituent_ids text[] not null default '{}';
+
+-- Parallel to each non-blank line in `other_party_name` (honorific from Split names).
+alter table public.activity_reports
+  add column if not exists other_party_titles text[] not null default '{}';

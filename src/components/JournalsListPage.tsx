@@ -8,6 +8,7 @@ import { syncUserProfile } from '../lib/profile'
 import { staffFullName } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import { listJournalsForUser, type DailyJournalRow } from '../lib/dailyJournals'
+import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 
 type Props = {
@@ -74,6 +75,7 @@ export function JournalsListPage({ user }: Props) {
     <div className="dashboard-page">
       <header className="dashboard-topbar">
         <div className="dashboard-topbar-start">
+          <AppLogo />
           <SessionBackButton />
           <h1 className="dashboard-brand">Journals</h1>
         </div>

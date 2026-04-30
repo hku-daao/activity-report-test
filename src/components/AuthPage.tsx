@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { signInWithEmailAndPassword } from 'firebase/auth'
 import { auth } from '../lib/firebase'
+import { AppLogo } from './AppLogo'
 
 export function AuthPage() {
   const [email, setEmail] = useState('')
@@ -33,6 +34,7 @@ export function AuthPage() {
   return (
     <div className="auth-shell">
       <header className="auth-header">
+        <AppLogo variant="auth" />
         <h1 className="auth-title">Activity Report</h1>
       </header>
 

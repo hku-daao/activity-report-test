@@ -7,6 +7,7 @@ import { syncUserProfile } from '../lib/profile'
 import { staffFullName } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import { ActivityReportsDashboard } from './ActivityReportsDashboard'
+import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 
 type Props = {
@@ -39,6 +40,7 @@ export function ActivityReportsListPage({ user }: Props) {
     <div className="dashboard-page">
       <header className="dashboard-topbar">
         <div className="dashboard-topbar-start">
+          <AppLogo />
           <SessionBackButton />
           <h1 className="dashboard-brand">
             Meeting / Engagement / Activity Reports

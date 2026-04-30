@@ -18,6 +18,7 @@ import {
   staffFullName,
   type StaffRow,
 } from '../lib/staffAccess'
+import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 import { fetchAllStaff } from '../lib/teamsAndStaff'
 
@@ -177,7 +178,10 @@ export function ActivityReportViewPage({ user }: Props) {
       <header className="dashboard-topbar">
         <div className="activity-topbar-left">
           <SessionBackButton />
-          <h1 className="dashboard-brand">Activity report</h1>
+          <div className="app-brand-lockup">
+            <AppLogo />
+            <h1 className="dashboard-brand">Activity report</h1>
+          </div>
         </div>
         <div className="dashboard-topbar-end">
           <SessionUserBeforeLogout label={sessionUserName} />
@@ -260,12 +264,29 @@ export function ActivityReportViewPage({ user }: Props) {
             <dd>
               {form.otherPartyNames.some((n) => n.trim()) ? (
                 <ul className="activity-view-donor-list">
-                  {form.otherPartyNames
-                    .map((n) => n.trim())
-                    .filter(Boolean)
-                    .map((n, i) => (
-                      <li key={`${i}-${n}`}>{n}</li>
-                    ))}
+                  {form.otherPartyNames.flatMap((n, i) => {
+                    const label = n.trim()
+                    if (!label) return []
+                    const tit = (form.otherPartyTitles[i] ?? '').trim()
+                    const cid = (form.otherPartyConstituentIds[i] ?? '').trim()
+                    return [
+                      <li key={`${i}-${label}`}>
+                        {tit ? (
+                          <>
+                            {tit}
+                            {' · '}
+                          </>
+                        ) : null}
+                        {label}
+                        {cid ? (
+                          <span className="activity-view-constituent-line">
+                            {' '}
+                            · Constituent ID: {cid}
+                          </span>
+                        ) : null}
+                      </li>,
+                    ]
+                  })}
                 </ul>
               ) : (
                 '—'
@@ -273,7 +294,7 @@ export function ActivityReportViewPage({ user }: Props) {
             </dd>
           </div>
           <div className="activity-view-row">
-            <dt>CRM Constituent No</dt>
+            <dt>CRM Constituent No (report level)</dt>
             <dd>{form.crmConstituentNo || '—'}</dd>
           </div>
           <div className="activity-view-row">

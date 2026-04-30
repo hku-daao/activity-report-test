@@ -102,3 +102,127 @@ for the "split name" function, other than blindly add names into current ones, a
 
 ### 2026-04-29 ###
 
+For the "Meeting / Engagement / Activity Reports", after split the names of "donor/prospect/guest", add lookup button next to each name. The lookup button will try to match the Name with information in table "V_QUERY_CONSTITUENT". If a match is found, that it will store the lookupid as "constituent id" related to this "donor/prospect/guest". If there are multiple matches, then the system will list out for user's selection. If there is no match, then it should prompt for no match and allow user to enter "constituent id" manually or leave it blank.
+
+There is already a table called "V_QUERY_CONSTITUENT", the schema is as follow:
+CREATE TABLE public.v_query_constituent (
+	"ID" varchar(40) NULL,
+	"KEYNAME" varchar(100) NULL,
+	"FIRSTNAME" varchar(50) NULL,
+	"MIDDLENAME" varchar(50) NULL,
+	"MAIDENNAME" varchar(100) NULL,
+	"NICKNAME" varchar(50) NULL,
+	"MARITALSTATUSCODEID_TRANSLATION" varchar(100) NULL,
+	"LOOKUPID" varchar(100) NULL,
+	"TITLECODEID_TRANSLATION" varchar(100) NULL,
+	"GENDER" varchar(7) NULL,
+	"BIRTHDATE" varchar(8) NULL,
+	"DECEASEDDATE" varchar(8) NULL,
+	"ISINACTIVE" bit(1) NOT NULL,
+	"GIVESANONYMOUSLY" bit(1) NOT NULL,
+	"DECEASED" bit(1) NULL,
+	"AGE" int4 NULL,
+	"DECEASEDYEARS" int4 NULL,
+	"NAME" varchar(154) NULL,
+	"WEBADDRESS" varchar(2047) NULL,
+	"DONOTMAIL" bit(1) NOT NULL,
+	"DONOTEMAIL" bit(1) NOT NULL,
+	"DONOTPHONE" bit(1) NOT NULL,
+	"DATEADDED" timestamp NOT NULL,
+	"DATECHANGED" timestamp NOT NULL,
+	"PRIMARYBUSINESS_ID" varchar(40) NULL,
+	"CONSTITUENTTYPE" varchar(100) NULL,
+	"DECEASEDCONFIRMATION" varchar(17) NULL,
+	"DECEASEDSOURCECODEID_TRANSLATION" varchar(100) NULL,
+	"TITLE2CODEID_TRANSLATION" varchar(100) NULL,
+	"FORMATTEDNAME" varchar(404) NULL,
+	"ISGROUP" bit(1) NOT NULL,
+	"SEQUENCEID" int4 NOT NULL
+);
+
+When there are matched constituents for user to select with, offer a view details option for user to view each constituent's detail information so the user will have more information knowing which one is the correct constituent.
+
+The name field user types in may include "title", such as mr miss dr prof..., please incorporate this into search function
+
+lookup function return error in web-browser: @supabase_supabase-js.js?v=85d3f545:19887  POST https://hiesxeucrhohunpqpalk.supabase.co/rest/v1/rpc/search_v_query_constituent 400 (Bad Request)
+
+invalid regular expression: quantifier operand invalid If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+I still got the error: invalid regular expression: quantifier operand invalid If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+The "Select a constituent" pop up should be larger. Better match the browser size.
+
+Even there is only one match, also show the "Select a constituent" and default show details for verification.
+
+
+
+### 2026-04-30 ###
+
+If there is multiple matches, unlike single match, the "Select a constituent" should default not show details. For "detail" view in "Select a constituent", remove ID, Title2, Is Group, Inactive, Gives anonymously, date added, date changed, sequence id.
+
+Rebuild the lookup function. Try to see if it contain the any title in the string. If there is a title, then put it aside for later matching. For the rest of the name string, then try to do a name matching. Try to construct a matching score in percentage. And put the matching results in descending order in "select a constituent" pop up.
+
+Failed to run sql query: ERROR:  42601: syntax error at or near ")"
+LINE 228:       ),
+
+Constituent lookup is not set up, or the API cache is outdated. In Supabase SQL, run: NOTIFY pgrst, 'reload schema'; Then ensure `search_v_query_constituent` is deployed and `GRANT EXECUTE` applies to the anon role.
+
+i retried but still got the error: Constituent lookup is not set up, or the API cache is outdated. In Supabase SQL, run: NOTIFY pgrst, 'reload schema'; Then ensure `search_v_query_constituent` is deployed and `GRANT EXECUTE` applies to the anon role.
+
+new error message when lookup: Constituent lookup failed (code 42883 — function round(double precision, integer) does not exist — No function matches the given name and argument types. You might need to add explicit type casts.). Confirm VITE_PROFILES_SUPABASE_URL matches the project where you ran the SQL. Try NOTIFY pgrst, 'reload schema'; ensure search_v_query_constituent exists and GRANT EXECUTE applies to anon.
+
+Another error after applying fix: code 57014 — canceling statement due to statement timeout If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+should i create any index for table v_query_constituent?
+
+suggestion: "FORMATTEDNAME", "NAME", "KEYNAME"
+"FIRSTNAME", "MAIDENNAME", "NICKNAME"
+"TITLECODEID_TRANSLATION", "TITLE2CODEID_TRANSLATION"
+"LOOKUPID" (often useful for id/substring search)
+
+another error: code 42702 — column reference "lookupid" is ambiguous — It could refer to either a PL/pgSQL variable or a table column. If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+code 57014 — canceling statement due to statement timeout If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+error when i try to create index: Error: Failed to run sql query: ERROR: 42704: operator class "extensions.gin_trgm_ops" does not exist for access method "gin"
+
+still got error after creating indexes: code 57014 — canceling statement due to statement timeout If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+Change the "Split Name" function, after split names by each lines, also try to match if there is any "title" inside the name. If there is, store the title into another field. Then rewrite the lookup function by matching the names first, and then try to match the title after it.
+
+Put the "Title" box before the "Name" box within the same line. And suspend the matching "title" in lookup function first to trace out if it triggers the timeout issue.
+
+add back the title matching after name matching
+
+Please limit the lookup founction to match only v_query_constituent.nickname and v_query_constituent.name to improve the performance.
+
+You should shuffle the words, split by space, try to match with different combinatiions.
+
+Also try to match v_query_constituent.keyname and v_query_constituent.firstname
+
+split inputted name by space, shuffle them, and then try match only v_query_constituent.keyname, v_query_constituent.firstname and v_query_constituent.nickname
+
+error: Constituent lookup failed (code 42883 — function public._search_tokens(text) does not exist — No function matches the given name and argument types. You might need to add explicit type casts.). Confirm VITE_PROFILES_SUPABASE_URL matches the project where you ran the SQL. Try NOTIFY pgrst, 'reload schema'; ensure search_v_query_constituent exists and GRANT EXECUTE applies to anon.
+
+Constituent lookup failed (code 42883 — function public._perm_phrases_distinct(text[]) does not exist — No function matches the given name and argument types. You might need to add explicit type casts.). Confirm VITE_PROFILES_SUPABASE_URL matches the project where you ran the SQL. Try NOTIFY pgrst, 'reload schema'; ensure search_v_query_constituent exists and GRANT EXECUTE applies to anon.
+
+after clicking "lookup" please show the shuffle result on the screen instead of lookup for debugging.
+
+are you using only permutation phrase for matching 3 fields (v_query_constituent.keyname, v_query_constituent.firstname and v_query_constituent.nickname)? If yes, giving me a timeout is not logical.
+
+change to match the shuffle results with only v_query_constituent.name or v_query_constituent.nickname
+
+please use this logo for the webapp.
+
+stop the debugging of showing shuffle results and do actual lookup.
+
+Put a suggestion to user to type First Name then Last Name, try ty split then names into first name and last name fields, showing at the same line. Then change the lookup function to matching separately Last Name to v_query_constituent.keyname and First Name to v_query_constituent.firstname or v_query_constituent.middlename OR the whole name match v_query_constituent.nickname
+
+Assume only the last word as last name
+
+At the view detail box, please also show "Constituency" from the v_query_constituency.constituency where v_query_constituent.id = v_query_constituency.constituentid. Multiple Consituency should be shown in same line separated by comma.
+
+There should be field constituency in table v_query_constituency. Why it returns error: code 42703 — column vc.constituency does not exist If you recently changed the function, run in Supabase SQL: NOTIFY pgrst, 'reload schema';
+
+remove showing constituency logic
+

@@ -7,6 +7,7 @@ import { isProfilesSupabaseConfigured } from '../lib/profilesSupabase'
 import { syncUserProfile } from '../lib/profile'
 import { staffFullName } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
+import { AppLogo } from './AppLogo'
 import { SessionUserBeforeLogout } from './SessionNav'
 
 type Props = {
@@ -40,7 +41,10 @@ export function Dashboard({ user }: Props) {
   return (
     <div className="dashboard-page">
       <header className="dashboard-topbar">
-        <h1 className="dashboard-brand">Activity Report: Home</h1>
+        <div className="dashboard-topbar-start">
+          <AppLogo />
+          <h1 className="dashboard-brand">Activity Report: Home</h1>
+        </div>
         <div className="dashboard-topbar-end">
           <SessionUserBeforeLogout label={sessionUserName} />
           <button
