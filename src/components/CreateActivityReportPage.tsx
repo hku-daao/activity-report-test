@@ -808,18 +808,6 @@ export function CreateActivityReportPage({ user }: Props) {
           </button>
         </div>
 
-        <label className="activity-field">
-          <span className="activity-label">CRM Constituent No (if any)</span>
-          <input
-            type="text"
-            className="activity-input"
-            value={form.crmConstituentNo}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, crmConstituentNo: e.target.value }))
-            }
-          />
-        </label>
-
         <label className="activity-field activity-checkbox-row">
           <input
             type="checkbox"

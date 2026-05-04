@@ -294,10 +294,6 @@ export function ActivityReportViewPage({ user }: Props) {
             </dd>
           </div>
           <div className="activity-view-row">
-            <dt>CRM Constituent No (report level)</dt>
-            <dd>{form.crmConstituentNo || '—'}</dd>
-          </div>
-          <div className="activity-view-row">
             <dt>Detail</dt>
             <dd className="activity-view-detail">{form.detail || '—'}</dd>
           </div>
