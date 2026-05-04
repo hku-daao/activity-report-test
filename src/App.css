@@ -1254,8 +1254,19 @@
   border-bottom: none;
 }
 
-.activity-multi-row--wrap {
-  align-items: flex-start;
+/* Donor name + Lookup + Remove: center-align controls; global .auth-submit has margin-top that would drop Lookup */
+.activity-donor-name-row {
+  align-items: center;
+}
+
+.activity-donor-name-row .auth-submit {
+  margin-top: 0;
+  /* Match .activity-icon-btn (Remove) — compact row actions, not full auth-submit */
+  font-size: 13px;
+  font-weight: 400;
+  padding: 8px 10px;
+  min-height: unset;
+  border-radius: 6px;
 }
 
 .activity-constituent-id-row {
@@ -1387,6 +1398,20 @@
 .constituent-lookup-match-text {
   min-width: 0;
   word-break: break-word;
+}
+
+.constituent-lookup-chinese-name {
+  color: var(--text-h);
+  font-weight: 400;
+}
+
+.constituent-lookup-match-text--search-four {
+  display: block;
+}
+
+.constituent-lookup-sep {
+  color: var(--activity-muted, var(--text-muted, #666));
+  font-weight: 400;
 }
 
 .constituent-lookup-details-btn {

@@ -1,6 +1,6 @@
 /**
- * UI labels and display order for `detail` on each constituent search row.
- * Keys come from `search_v_query_constituent` (jsonb).
+ * UI labels and display order for `detail` in the constituent picker.
+ * Keys may come from `get_constituent_detail` (jsonb) or legacy search payloads.
  */
 
 /** Keys present in RPC detail but hidden in the pick-list UI. */
@@ -16,6 +16,15 @@ export const CONSTITUENT_DETAIL_EXCLUDED_KEYS = new Set([
 ])
 
 export const CONSTITUENT_DETAIL_ORDER: string[] = [
+  'Constituent_ID',
+  'Formatted_Name',
+  'Chinese_Name',
+  'Martial_Status',
+  'BIRTHDATE',
+  'GENDER',
+  'AGE',
+  'Constituent_Type',
+  'CONSTITUENCY',
   'lookup_id',
   'formattedname',
   'name',
@@ -43,6 +52,15 @@ export const CONSTITUENT_DETAIL_ORDER: string[] = [
 ]
 
 const OVERRIDES: Record<string, string> = {
+  Constituent_ID: 'Constituent ID',
+  Formatted_Name: 'Formatted name',
+  Chinese_Name: 'Chinese name',
+  Martial_Status: 'Marital status',
+  BIRTHDATE: 'Birth date',
+  GENDER: 'Gender',
+  AGE: 'Age',
+  Constituent_Type: 'Constituent type',
+  CONSTITUENCY: 'Constituency',
   lookup_id: 'Lookup ID',
   keyname: 'Key name',
   firstname: 'First name',

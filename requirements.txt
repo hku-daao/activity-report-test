@@ -226,3 +226,37 @@ There should be field constituency in table v_query_constituency. Why it returns
 
 remove showing constituency logic
 
+
+### 2026-05-04 ###
+
+Please reverse the "split name" function back to split into multipe lines but single box, instead of further split title, last name and first name. For the "lookup" function, please use the function search_constituents() in file 001_search_constituents_function.sql. If the user want to see details, then call the function get_constituent_detail() in file 002_get_constituent_detail.sql.
+
+After click on lookup, please show both their lookupid, formattedname, nickname and percentage.
+
+I mean show all in the same line, "formattedname" should just be the name showed before, nickname is chinese name
+
+function search_constituents() of 001_search_constituents_function.sql should return the following:
+    y."LOOKUPID",
+    y."NICKNAME",
+    y."FORMATTEDNAME",
+    y."SCORE"
+
+You misintepreted my point, I mean show all the following in same line after clicking the lookup:
+    y."LOOKUPID",
+    y."NICKNAME",
+    y."FORMATTEDNAME",
+    y."SCORE"
+But currently you are only showing lookupid and score.	
+The "View details" should NOT be changed, please revert back using function get_constituent_detail() in file 002_get_constituent_detail.sql.
+
+Change the wording of button "Use this ID" to "Use this Constituent". After clicking on this button, also replace the text in Name box with "formattedname" on top of replacing constituent ID.
+
+Please line up the "lookup" button with name box and "remove" button
+
+Size of lookup button should match with remove button	
+
+At the pop up box, is shows up text: "Several records matched 'XXX'. Each row shows LOOKUPID, NICKNAME, FORMATTEDNAME, and SCORE from the search. Use View details for full CRM fields from get_constituent_detail."
+Please repharse to only showing: "Several records matched 'XXX'. Please select the correct one." 
+
+i just want to change the text only, what have you done to the program logic? it does not showing any searching result anymore. please rollback any logic. I just want to change the text.
+

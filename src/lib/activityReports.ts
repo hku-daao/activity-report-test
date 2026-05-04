@@ -18,11 +18,7 @@ export type ActivityReportFormState = {
   otherPeopleNames: string[]
   /** Donor / Prospect / Guest — one entry per person; stored in DB as newline-separated text. */
   otherPartyNames: string[]
-  /** First name per donor row; aligned with `otherPartyLastNames`. Combined line for DB is derived. */
-  otherPartyFirstNames: string[]
-  /** Last name / family name per donor row. */
-  otherPartyLastNames: string[]
-  /** Honorific / title per row (from Split names); aligned by index with `otherPartyNames`. */
+  /** Honorific / title per row (optional; from older data); aligned by index with `otherPartyNames`. */
   otherPartyTitles: string[]
   /** CRM constituent (lookup) id per name row; aligned by index with `otherPartyNames`. */
   otherPartyConstituentIds: string[]
@@ -77,8 +73,6 @@ export function defaultFormState(): ActivityReportFormState {
     otherPeopleEnabled: false,
     otherPeopleNames: [''],
     otherPartyNames: [''],
-    otherPartyFirstNames: [''],
-    otherPartyLastNames: [''],
     otherPartyTitles: [''],
     otherPartyConstituentIds: [''],
     crmConstituentNo: '',
@@ -140,24 +134,8 @@ export function otherPartyNamesFromDb(text: string | null | undefined): string[]
   return lines.length > 0 ? lines : ['']
 }
 
-/** Split one stored name line: last word is last name; all preceding words are first name. */
-export function splitStoredPartyLine(nameLine: string): {
-  first: string
-  last: string
-} {
-  const t = nameLine.trim().replace(/\s+/g, ' ')
-  if (!t) return { first: '', last: '' }
-  const parts = t.split(' ')
-  if (parts.length === 1) {
-    return { first: parts[0] ?? '', last: '' }
-  }
-  const last = parts[parts.length - 1] ?? ''
-  const first = parts.slice(0, -1).join(' ')
-  return { first, last }
-}
-
-/** Join first + last for a single stored line (matches how rows are saved). */
-export function combinePartyFirstLast(first: string, last: string): string {
+/** Migrate drafts that stored separate first/last into one name line. */
+function combineLegacyFirstLast(first: string, last: string): string {
   const f = first.trim()
   const l = last.trim()
   if (f && l) return `${f} ${l}`
@@ -207,28 +185,6 @@ export function alignTitlesToPartyNames(
   return out
 }
 
-/** Pads or trims string arrays to `rowCount` donor rows. */
-export function alignPartyFieldRows(rowCount: number, values: string[]): string[] {
-  const out: string[] = []
-  for (let i = 0; i < rowCount; i++) {
-    out.push((values[i] ?? '').trim())
-  }
-  return out
-}
-
-/** Keeps `otherPartyNames[i]` in sync with first + last fields. */
-export function syncOtherPartyNamesFromFirstLast(
-  first: string[],
-  last: string[],
-): string[] {
-  const n = Math.max(first.length, last.length)
-  const out: string[] = []
-  for (let i = 0; i < n; i++) {
-    out.push(combinePartyFirstLast(first[i] ?? '', last[i] ?? ''))
-  }
-  return out
-}
-
 function parseOtherPartyTitlesFromRow(
   row: Pick<ActivityReportRow, 'other_party_titles'>,
 ): string[] {
@@ -242,8 +198,7 @@ function parseOtherPartyTitlesFromRow(
 
 /** Pairs only non-blank name rows; same order for DB arrays and newline text. */
 export function zipOtherPartyNameAndConstituentIds(
-  otherPartyFirstNames: string[],
-  otherPartyLastNames: string[],
+  otherPartyNames: string[],
   otherPartyConstituentIds: string[],
   otherPartyTitles: string[],
 ): {
@@ -252,15 +207,8 @@ export function zipOtherPartyNameAndConstituentIds(
   titlesArray: string[] | null
 } {
   const pairs: { name: string; id: string; title: string }[] = []
-  const n = Math.max(
-    otherPartyFirstNames.length,
-    otherPartyLastNames.length,
-  )
-  for (let i = 0; i < n; i++) {
-    const name = combinePartyFirstLast(
-      otherPartyFirstNames[i] ?? '',
-      otherPartyLastNames[i] ?? '',
-    ).trim()
+  for (let i = 0; i < otherPartyNames.length; i++) {
+    const name = (otherPartyNames[i] ?? '').trim()
     if (!name) continue
     pairs.push({
       name,
@@ -300,48 +248,53 @@ export function mergeWithDefaults(
     }
     return base.otherPartyNames
   }
-  const otherPartyNamesResolved = otherPartyNamesFromPartial()
-  const nParty = otherPartyNamesResolved.length
-  const fromStoredLines = otherPartyNamesResolved.map((line) =>
-    splitStoredPartyLine(line),
-  )
-  const otherPartyFirstNamesResolved =
-    Array.isArray(partial.otherPartyFirstNames) &&
-    partial.otherPartyFirstNames.length > 0
-      ? alignPartyFieldRows(
-          nParty,
-          partial.otherPartyFirstNames.map((s) => String(s)),
-        )
-      : fromStoredLines.map((p) => p.first)
-  const otherPartyLastNamesResolved =
-    Array.isArray(partial.otherPartyLastNames) &&
-    partial.otherPartyLastNames.length > 0
-      ? alignPartyFieldRows(
-          nParty,
-          partial.otherPartyLastNames.map((s) => String(s)),
-        )
-      : fromStoredLines.map((p) => p.last)
-  const otherPartyNamesSynced = syncOtherPartyNamesFromFirstLast(
-    otherPartyFirstNamesResolved,
-    otherPartyLastNamesResolved,
-  )
+  let otherPartyNamesResolved = otherPartyNamesFromPartial()
+  const partialSplit = partial as Partial<ActivityReportFormState> & {
+    otherPartyFirstNames?: string[]
+    otherPartyLastNames?: string[]
+  }
+  if (
+    Array.isArray(partialSplit.otherPartyFirstNames) &&
+    partialSplit.otherPartyFirstNames.length > 0
+  ) {
+    const lastArr = Array.isArray(partialSplit.otherPartyLastNames)
+      ? partialSplit.otherPartyLastNames.map((s) => String(s))
+      : []
+    const firstArr = partialSplit.otherPartyFirstNames.map((s) => String(s))
+    const maxLen = Math.max(
+      otherPartyNamesResolved.length,
+      firstArr.length,
+      lastArr.length,
+    )
+    otherPartyNamesResolved = Array.from({ length: maxLen }, (_, i) => {
+      const combined = combineLegacyFirstLast(
+        firstArr[i] ?? '',
+        lastArr[i] ?? '',
+      ).trim()
+      const fallback = String(otherPartyNamesResolved[i] ?? '').trim()
+      return combined || fallback
+    })
+    if (otherPartyNamesResolved.every((s) => !String(s).trim())) {
+      otherPartyNamesResolved = ['']
+    }
+  }
   const otherPartyConstituentIdsFromPartial = (): string[] => {
     if (Array.isArray(partial.otherPartyConstituentIds)) {
       return alignConstituentIdsToPartyNames(
-        otherPartyNamesSynced,
+        otherPartyNamesResolved,
         partial.otherPartyConstituentIds,
       )
     }
-    return alignConstituentIdsToPartyNames(otherPartyNamesSynced, [])
+    return alignConstituentIdsToPartyNames(otherPartyNamesResolved, [])
   }
   const otherPartyTitlesFromPartial = (): string[] => {
     if (Array.isArray(partial.otherPartyTitles)) {
       return alignTitlesToPartyNames(
-        otherPartyNamesSynced,
+        otherPartyNamesResolved,
         partial.otherPartyTitles,
       )
     }
-    return alignTitlesToPartyNames(otherPartyNamesSynced, [])
+    return alignTitlesToPartyNames(otherPartyNamesResolved, [])
   }
   return {
     ...base,
@@ -355,9 +308,7 @@ export function mergeWithDefaults(
       partial.otherPeopleNames.length > 0
         ? partial.otherPeopleNames
         : base.otherPeopleNames,
-    otherPartyNames: otherPartyNamesSynced,
-    otherPartyFirstNames: otherPartyFirstNamesResolved,
-    otherPartyLastNames: otherPartyLastNamesResolved,
+    otherPartyNames: otherPartyNamesResolved,
     otherPartyTitles: otherPartyTitlesFromPartial(),
     otherPartyConstituentIds: otherPartyConstituentIdsFromPartial(),
     attachmentItems:
@@ -466,11 +417,7 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
     row.team_filter === 'all' ? '__all__' : String(row.team_filter)
   const otherNames = parseOtherPeopleNamesFromRow(row)
 
-  const partyLines = otherPartyNamesFromDb(row.other_party_name)
-  const splits = partyLines.map((line) => splitStoredPartyLine(line))
-  const firstArr = splits.map((s) => s.first)
-  const lastArr = splits.map((s) => s.last)
-  const partyNames = syncOtherPartyNamesFromFirstLast(firstArr, lastArr)
+  const partyNames = otherPartyNamesFromDb(row.other_party_name)
   return {
     title: row.title?.trim() ?? '',
     teamFilter,
@@ -479,8 +426,6 @@ export function activityRowToFormState(row: ActivityReportRow): ActivityReportFo
       Boolean(row.other_people_enabled) || otherNames.length > 0,
     otherPeopleNames: otherNames.length > 0 ? otherNames : [''],
     otherPartyNames: partyNames,
-    otherPartyFirstNames: firstArr,
-    otherPartyLastNames: lastArr,
     otherPartyTitles: alignTitlesToPartyNames(
       partyNames,
       parseOtherPartyTitlesFromRow(row),
@@ -548,8 +493,7 @@ function buildRowPayload(user: User, state: ActivityReportFormState) {
     ? state.otherPeopleNames.map((n) => n.trim()).filter(Boolean)
     : []
   const partyZip = zipOtherPartyNameAndConstituentIds(
-    state.otherPartyFirstNames,
-    state.otherPartyLastNames,
+    state.otherPartyNames,
     state.otherPartyConstituentIds,
     state.otherPartyTitles,
   )

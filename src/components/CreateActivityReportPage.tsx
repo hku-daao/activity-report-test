@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -8,9 +14,6 @@ import {
   alignConstituentIdsToPartyNames,
   alignTitlesToPartyNames,
   clearDraftClientStorage,
-  combinePartyFirstLast,
-  splitStoredPartyLine,
-  syncOtherPartyNamesFromFirstLast,
   defaultFormState,
   fetchActivityReportById,
   loadDraftRowIdFromStorage,
@@ -23,10 +26,10 @@ import {
 } from '../lib/activityReports'
 import { entriesForConstituentDetail } from '../lib/constituentDetailLabels'
 import {
-  searchVQueryConstituent,
+  getConstituentDetail,
+  searchConstituents,
   type ConstituentLookupRow,
 } from '../lib/constituentLookup'
-import { extractLeadingTitle } from '../lib/nameTitleParts'
 import {
   loadStaffDashboard,
   staffFullName,
@@ -309,47 +312,23 @@ export function CreateActivityReportPage({ user }: Props) {
     }
     setFeedback(null)
     setForm((f) => {
-      const keptPairs: {
-        first: string
-        last: string
-        title: string
-        id: string
-      }[] = []
+      const keptPairs: { name: string; title: string; id: string }[] = []
       f.otherPartyNames.forEach((n, i) => {
         const t = String(n).trim()
         if (t) {
           keptPairs.push({
-            first: f.otherPartyFirstNames[i] ?? '',
-            last: f.otherPartyLastNames[i] ?? '',
+            name: t,
             title: (f.otherPartyTitles[i] ?? '').trim(),
             id: (f.otherPartyConstituentIds[i] ?? '').trim(),
           })
         }
       })
-      const parsed = lines.map((line) => {
-        const parts = extractLeadingTitle(line)
-        const sl = splitStoredPartyLine(parts.nameRest)
-        return { title: parts.title, first: sl.first, last: sl.last }
-      })
-      const firstCol = [
-        ...parsed.map((p) => p.first),
-        ...keptPairs.map((p) => p.first),
-      ]
-      const lastCol = [
-        ...parsed.map((p) => p.last),
-        ...keptPairs.map((p) => p.last),
-      ]
       return {
         ...f,
-        otherPartyFirstNames: firstCol,
-        otherPartyLastNames: lastCol,
-        otherPartyNames: syncOtherPartyNamesFromFirstLast(firstCol, lastCol),
-        otherPartyTitles: [
-          ...parsed.map((p) => p.title),
-          ...keptPairs.map((p) => p.title),
-        ],
+        otherPartyNames: [...lines, ...keptPairs.map((p) => p.name)],
+        otherPartyTitles: [...lines.map(() => ''), ...keptPairs.map((p) => p.title)],
         otherPartyConstituentIds: [
-          ...parsed.map(() => ''),
+          ...lines.map(() => ''),
           ...keptPairs.map((p) => p.id),
         ],
       }
@@ -359,31 +338,27 @@ export function CreateActivityReportPage({ user }: Props) {
 
   const runConstituentLookup = useCallback(
     async (index: number) => {
-      const first = String(formRef.current.otherPartyFirstNames[index] ?? '').trim()
-      const last = String(formRef.current.otherPartyLastNames[index] ?? '').trim()
-      const title = String(formRef.current.otherPartyTitles[index] ?? '').trim()
-      if (!first && !last) {
+      const nameLine = String(formRef.current.otherPartyNames[index] ?? '').trim()
+      if (!nameLine) {
         setFeedback({
           type: 'error',
-          text: 'Enter a first or last name in this row before using Lookup.',
+          text: 'Enter a name in this row before using Lookup.',
         })
         return
       }
       setLookupLoadingIndex(index)
       setFeedback(null)
-      const res = await searchVQueryConstituent(first, last, { title })
+      const res = await searchConstituents(nameLine)
       setLookupLoadingIndex(null)
       if (!res.ok) {
         setFeedback({ type: 'error', text: res.message })
         return
       }
       if (res.rows.length >= 1) {
-        const combined = combinePartyFirstLast(first, last)
-        const queryLabel = title ? `${title} · ${combined}` : combined
         setLookupDialog({
           type: 'pick',
           index,
-          name: queryLabel,
+          name: nameLine,
           matches: res.rows,
         })
         return
@@ -391,10 +366,7 @@ export function CreateActivityReportPage({ user }: Props) {
       setLookupDialog({
         type: 'none',
         index,
-        name: (() => {
-          const c = combinePartyFirstLast(first, last)
-          return title ? `${title} · ${c}` : c
-        })(),
+        name: nameLine,
         manualId: String(
           formRef.current.otherPartyConstituentIds[index] ?? '',
         ).trim(),
@@ -699,13 +671,10 @@ export function CreateActivityReportPage({ user }: Props) {
         <div className="activity-field">
           <span className="activity-label">Donor / Prospect / Guest:</span>
           <p className="activity-hint">
-            Type <strong>First name</strong>, then <strong>Last name</strong> on each
-            line (or paste a full name—Split names treats the <strong>last word</strong>{' '}
-            as Last name and all words before as First name). Click{' '}
-            <strong>Split names</strong> to
-            add each line as its own row <strong>above</strong> names you already have.
-            Leading honorifics (e.g. Dr, Mr) move into <strong>Title</strong>. You can add
-            or remove rows afterwards.
+            Type or paste <strong>one name per line</strong>, then click{' '}
+            <strong>Split names</strong> to add each line as its own box{' '}
+            <strong>above</strong> any names you already have. You can add or remove boxes
+            afterwards.
           </p>
           <textarea
             className="activity-textarea activity-textarea--compact"
@@ -728,99 +697,34 @@ export function CreateActivityReportPage({ user }: Props) {
         <div className="activity-field activity-multi">
           <span className="activity-label">Names</span>
           <p className="activity-hint">
-            Enter <strong>First name</strong> then <strong>Last name</strong> on the same
-            row (Lookup matches last name to surname in CRM, first name to given or middle).
-            Or match a <strong>nickname</strong> by typing the full name as you would in
-            the nickname field. Use <strong>Lookup</strong> for{' '}
-            <code className="activity-code-inline">V_QUERY_CONSTITUENT</code>, or type a{' '}
-            <strong>Constituent ID</strong> by hand. Leave ID blank if not required.
+            Use <strong>Lookup</strong> to search the CRM with the text in the name box, or
+            type a <strong>Constituent ID</strong> by hand. Leave ID blank if not required.
           </p>
-          {form.otherPartyFirstNames.map((_, i) => (
+          {form.otherPartyNames.map((name, i) => (
             <div key={i} className="activity-donor-block">
-              <div className="activity-multi-row activity-multi-row--wrap">
+              <div className="activity-multi-row activity-donor-name-row">
                 <input
                   type="text"
-                  className="activity-input activity-input--party-title"
-                  placeholder="Title"
-                  aria-label="Title"
-                  value={form.otherPartyTitles[i] ?? ''}
+                  className="activity-input activity-input--party-name"
+                  placeholder="Name"
+                  aria-label="Name"
+                  value={name}
                   onChange={(e) => {
                     const v = e.target.value
                     setForm((f) => {
-                      const rowCount = f.otherPartyFirstNames.length
-                      const next = [...f.otherPartyTitles]
-                      if (next.length < rowCount) {
-                        while (next.length < rowCount) next.push('')
-                      }
-                      next[i] = v
-                      return { ...f, otherPartyTitles: next }
-                    })
-                  }}
-                />
-                <input
-                  type="text"
-                  className="activity-input activity-input--party-first"
-                  placeholder="First name"
-                  aria-label="First name"
-                  value={form.otherPartyFirstNames[i] ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => {
-                      const first = [...f.otherPartyFirstNames]
-                      const last = [...f.otherPartyLastNames]
+                      const nextNames = [...f.otherPartyNames]
                       const nextIds = [...f.otherPartyConstituentIds]
                       const nextTitles = [...f.otherPartyTitles]
-                      first[i] = v
-                      if (last.length < first.length) {
-                        while (last.length < first.length) last.push('')
+                      nextNames[i] = v
+                      if (nextIds.length < nextNames.length) {
+                        while (nextIds.length < nextNames.length) nextIds.push('')
                       }
-                      if (nextIds.length < first.length) {
-                        while (nextIds.length < first.length) nextIds.push('')
+                      if (nextTitles.length < nextNames.length) {
+                        while (nextTitles.length < nextNames.length) nextTitles.push('')
                       }
-                      if (nextTitles.length < first.length) {
-                        while (nextTitles.length < first.length) nextTitles.push('')
-                      }
-                      const names = syncOtherPartyNamesFromFirstLast(first, last)
                       return {
                         ...f,
-                        otherPartyFirstNames: first,
-                        otherPartyLastNames: last,
-                        otherPartyNames: names,
-                        otherPartyConstituentIds: nextIds,
-                        otherPartyTitles: nextTitles,
-                      }
-                    })
-                  }}
-                />
-                <input
-                  type="text"
-                  className="activity-input activity-input--party-last"
-                  placeholder="Last name"
-                  aria-label="Last name"
-                  value={form.otherPartyLastNames[i] ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => {
-                      const first = [...f.otherPartyFirstNames]
-                      const last = [...f.otherPartyLastNames]
-                      const nextIds = [...f.otherPartyConstituentIds]
-                      const nextTitles = [...f.otherPartyTitles]
-                      last[i] = v
-                      if (first.length < last.length) {
-                        while (first.length < last.length) first.push('')
-                      }
-                      if (nextIds.length < last.length) {
-                        while (nextIds.length < last.length) nextIds.push('')
-                      }
-                      if (nextTitles.length < last.length) {
-                        while (nextTitles.length < last.length) nextTitles.push('')
-                      }
-                      const names = syncOtherPartyNamesFromFirstLast(first, last)
-                      return {
-                        ...f,
-                        otherPartyFirstNames: first,
-                        otherPartyLastNames: last,
-                        otherPartyNames: names,
+                        otherPartyNames: nextNames,
                         otherPartyConstituentIds: nextIds,
                         otherPartyTitles: nextTitles,
                       }
@@ -839,22 +743,16 @@ export function CreateActivityReportPage({ user }: Props) {
                   type="button"
                   className="activity-icon-btn"
                   onClick={() =>
-                    setForm((f) => {
-                      const first = f.otherPartyFirstNames.filter((_, j) => j !== i)
-                      const last = f.otherPartyLastNames.filter((_, j) => j !== i)
-                      return {
-                        ...f,
-                        otherPartyFirstNames: first,
-                        otherPartyLastNames: last,
-                        otherPartyNames: syncOtherPartyNamesFromFirstLast(first, last),
-                        otherPartyTitles: f.otherPartyTitles.filter((_, j) => j !== i),
-                        otherPartyConstituentIds: f.otherPartyConstituentIds.filter(
-                          (_, j) => j !== i,
-                        ),
-                      }
-                    })
+                    setForm((f) => ({
+                      ...f,
+                      otherPartyNames: f.otherPartyNames.filter((_, j) => j !== i),
+                      otherPartyTitles: f.otherPartyTitles.filter((_, j) => j !== i),
+                      otherPartyConstituentIds: f.otherPartyConstituentIds.filter(
+                        (_, j) => j !== i,
+                      ),
+                    }))
                   }
-                  disabled={form.otherPartyFirstNames.length <= 1}
+                  disabled={form.otherPartyNames.length <= 1}
                   aria-label="Remove name"
                 >
                   Remove
@@ -870,7 +768,7 @@ export function CreateActivityReportPage({ user }: Props) {
                   onChange={(e) => {
                     const v = e.target.value
                     setForm((f) => {
-                      const rowCount = f.otherPartyFirstNames.length
+                      const rowCount = f.otherPartyNames.length
                       const next = [...f.otherPartyConstituentIds]
                       if (next.length < rowCount) {
                         while (next.length < rowCount) {
@@ -890,16 +788,9 @@ export function CreateActivityReportPage({ user }: Props) {
             className="activity-add-btn"
             onClick={() =>
               setForm((f) => {
-                const otherPartyFirstNames = [...f.otherPartyFirstNames, '']
-                const otherPartyLastNames = [...f.otherPartyLastNames, '']
-                const otherPartyNames = syncOtherPartyNamesFromFirstLast(
-                  otherPartyFirstNames,
-                  otherPartyLastNames,
-                )
+                const otherPartyNames = [...f.otherPartyNames, '']
                 return {
                   ...f,
-                  otherPartyFirstNames,
-                  otherPartyLastNames,
                   otherPartyNames,
                   otherPartyTitles: alignTitlesToPartyNames(
                     otherPartyNames,
@@ -1115,21 +1006,28 @@ export function CreateActivityReportPage({ user }: Props) {
             name={lookupDialog.name}
             matches={lookupDialog.matches}
             onCancel={() => setLookupDialog(null)}
-            onSelect={(lookupid) => {
+            onSelect={(lookupid, formattedNameForNameBox) => {
               if (!lookupDialog || lookupDialog.type !== 'pick') return
               setForm((f) => {
                 const idx = lookupDialog.index
-                const next = alignConstituentIdsToPartyNames(
+                const nextIds = alignConstituentIdsToPartyNames(
                   f.otherPartyNames,
                   f.otherPartyConstituentIds,
                 )
-                next[idx] = lookupid
-                return { ...f, otherPartyConstituentIds: next }
+                nextIds[idx] = lookupid
+                const nextNames = [...f.otherPartyNames]
+                while (nextNames.length <= idx) nextNames.push('')
+                nextNames[idx] = formattedNameForNameBox.trim()
+                return {
+                  ...f,
+                  otherPartyNames: nextNames,
+                  otherPartyConstituentIds: nextIds,
+                }
               })
               setLookupDialog(null)
               setFeedback({
                 type: 'success',
-                text: 'Constituent ID was set from lookup.',
+                text: 'Constituent ID and name were set from lookup.',
               })
             }}
           />
@@ -1187,7 +1085,7 @@ function ConstituentPickList({
 }: {
   name: string
   matches: ConstituentLookupRow[]
-  onSelect: (lookupid: string) => void
+  onSelect: (lookupid: string, formattedNameForNameBox: string) => void
   onCancel: () => void
 }) {
   const [selectedId, setSelectedId] = useState(
@@ -1196,6 +1094,35 @@ function ConstituentPickList({
   const [openDetailId, setOpenDetailId] = useState<string | null>(() =>
     matches.length === 1 ? (matches[0]?.lookupid ?? null) : null,
   )
+  const [detailById, setDetailById] = useState<
+    Record<string, Record<string, unknown>>
+  >({})
+  const detailByIdRef = useRef(detailById)
+  detailByIdRef.current = detailById
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
+  const [detailErrorById, setDetailErrorById] = useState<
+    Record<string, string>
+  >({})
+
+  const loadDetail = useCallback(async (lookupId: string) => {
+    if (!lookupId || detailByIdRef.current[lookupId]) return
+    setDetailLoadingId(lookupId)
+    const res = await getConstituentDetail(lookupId)
+    setDetailLoadingId((cur) => (cur === lookupId ? null : cur))
+    if (res.ok) {
+      setDetailById((d) => ({ ...d, [lookupId]: res.detail }))
+    } else {
+      setDetailErrorById((e) => ({ ...e, [lookupId]: res.message }))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (matches.length === 1) {
+      const id = matches[0]?.lookupid
+      if (id) void loadDetail(id)
+    }
+  }, [matches, loadDetail])
+
   const multi = matches.length > 1
   return (
     <div className="constituent-lookup-panel">
@@ -1203,15 +1130,12 @@ function ConstituentPickList({
       <p className="activity-muted constituent-lookup-lead">
         {multi ? (
           <>
-            Several records matched ‘{name}’. Results are sorted by match
-            score (highest first); the top row is selected by default. Use{' '}
-            <strong>View details</strong> on a row to see CRM fields before you
-            confirm.
+            Several records matched ‘{name}’. Please select the correct one.
           </>
         ) : (
           <>
-            One record matched ‘{name}’. Details are shown below so you can
-            verify before confirming this constituent ID.
+            One record matched ‘{name}’. Details below use{' '}
+            <code className="activity-code-inline">get_constituent_detail</code>.
           </>
         )}
       </p>
@@ -1219,8 +1143,17 @@ function ConstituentPickList({
         {matches.map((m) => {
           const id = m.lookupid
           const label = m.display_name?.trim() || id
+          const nick = m.nickname?.trim() ?? ''
+          const fmt = m.formatted_name?.trim() ?? ''
+          const scorePct =
+            m.match_score != null && Number.isFinite(m.match_score)
+              ? `${m.match_score}%`
+              : '—'
           const detailsOpen = openDetailId === id
-          const detailRows = entriesForConstituentDetail(m.detail)
+          const loadedDetail = detailById[id]
+          const detailRows = entriesForConstituentDetail(loadedDetail)
+          const loadingThis = detailLoadingId === id
+          const err = detailErrorById[id]
           return (
             <li key={id} className="constituent-lookup-match-block">
               <div className="constituent-lookup-match-top">
@@ -1235,25 +1168,39 @@ function ConstituentPickList({
                       if (!multi) setOpenDetailId(id)
                     }}
                   />
-                  <span className="constituent-lookup-match-text">
-                    <span className="constituent-lookup-id">{id}</span>
-                    {label !== id ? (
-                      <span className="constituent-lookup-disp"> — {label}</span>
-                    ) : null}
-                    {m.match_score != null ? (
-                      <span className="constituent-lookup-score" title="Match score">
-                        {' '}
-                        · {m.match_score}%
-                      </span>
-                    ) : null}
+                  <span className="constituent-lookup-match-text constituent-lookup-match-text--search-four">
+                    <span className="constituent-lookup-id" title="LOOKUPID">
+                      {id}
+                    </span>
+                    <span className="constituent-lookup-sep" aria-hidden>
+                      {' '}
+                      ·{' '}
+                    </span>
+                    <span title="NICKNAME">{nick || '—'}</span>
+                    <span className="constituent-lookup-sep" aria-hidden>
+                      {' '}
+                      ·{' '}
+                    </span>
+                    <span title="FORMATTEDNAME">{fmt || '—'}</span>
+                    <span className="constituent-lookup-sep" aria-hidden>
+                      {' '}
+                      ·{' '}
+                    </span>
+                    <span className="constituent-lookup-score" title="SCORE">
+                      {scorePct}
+                    </span>
                   </span>
                 </label>
                 <button
                   type="button"
                   className="constituent-lookup-details-btn"
-                  onClick={() =>
-                    setOpenDetailId((cur) => (cur === id ? null : id))
-                  }
+                  onClick={() => {
+                    setOpenDetailId((cur) => {
+                      const next = cur === id ? null : id
+                      if (next === id) void loadDetail(id)
+                      return next
+                    })
+                  }}
                   aria-expanded={detailsOpen}
                   aria-controls={
                     detailsOpen ? `constituent-detail-${id}` : undefined
@@ -1269,7 +1216,13 @@ function ConstituentPickList({
                   role="region"
                   aria-label={`Details for ${label}`}
                 >
-                  {detailRows.length > 0 ? (
+                  {loadingThis && !loadedDetail ? (
+                    <p className="activity-muted">Loading details…</p>
+                  ) : err ? (
+                    <p className="feedback error" role="alert">
+                      {err}
+                    </p>
+                  ) : detailRows.length > 0 ? (
                     <dl className="constituent-detail-dl">
                       {detailRows.map(({ key, label: dl, value }) => (
                         <div key={key} className="constituent-detail-row">
@@ -1280,12 +1233,15 @@ function ConstituentPickList({
                     </dl>
                   ) : (
                     <p className="constituent-detail-empty activity-muted">
-                      No detail fields returned for this row. You can still use
-                      Lookup ID and the label above, or re-deploy the latest{' '}
+                      No detail fields returned. Deploy{' '}
                       <code className="activity-code-inline">
-                        search_v_query_constituent
+                        get_constituent_detail
                       </code>{' '}
-                      function in Supabase to load CRM fields.
+                      in Supabase (see{' '}
+                      <code className="activity-code-inline">
+                        002_get_constituent_detail.sql
+                      </code>
+                      ) or check permissions.
                     </p>
                   )}
                 </div>
@@ -1298,10 +1254,17 @@ function ConstituentPickList({
         <button
           type="button"
           className="auth-submit"
-          onClick={() => onSelect(selectedId)}
+          onClick={() => {
+            const sel = matches.find((x) => x.lookupid === selectedId)
+            const nameLine =
+              sel?.formatted_name?.trim() ||
+              sel?.display_name?.trim() ||
+              ''
+            onSelect(selectedId, nameLine)
+          }}
           disabled={!selectedId}
         >
-          Use this ID
+          Use this Constituent
         </button>
         <button
           type="button"
