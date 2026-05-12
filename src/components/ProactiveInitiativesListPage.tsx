@@ -1,18 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
 import { Link } from 'react-router-dom'
 import { auth } from '../lib/firebase'
 import { isProfilesSupabaseConfigured } from '../lib/profilesSupabase'
 import { syncUserProfile } from '../lib/profile'
-import { staffFullName } from '../lib/staffAccess'
-import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import {
-  listProactiveInitiativesForUser,
+  EMPTY_SUBORDINATES,
+  staffFullName,
+  type StaffRow,
+  type TeamRow,
+} from '../lib/staffAccess'
+import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
+import { useSupervisorScope } from '../hooks/useSupervisorScope'
+import {
+  fetchCreatorDirectoryByFirebaseUids,
+  fetchTeamsAlphabetical,
+} from '../lib/teamsAndStaff'
+import {
+  listProactiveInitiativesForFirebaseUids,
   type ProactiveInitiativeRow,
 } from '../lib/proactiveInitiatives'
 import { AppLogo } from './AppLogo'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
+import { SupervisorScopeControls } from './SupervisorScopeControls'
 
 type Props = {
   user: User
@@ -29,8 +40,32 @@ function formatWhen(iso: string): string {
   }
 }
 
+function pendingViewerStaff(user: User): StaffRow {
+  return {
+    id: '__pending__',
+    name: null,
+    email: user.email ?? null,
+    team_id: null,
+    app_id: null,
+    display_name: null,
+    director: null,
+  }
+}
+
 export function ProactiveInitiativesListPage({ user }: Props) {
   const { state: staffState } = useStaffDashboardState(user)
+
+  const viewerStaff = useMemo((): StaffRow => {
+    if (staffState.status === 'ready') return staffState.data.staff
+    return pendingViewerStaff(user)
+  }, [staffState, user])
+
+  const subordinates =
+    staffState.status === 'ready'
+      ? staffState.data.subordinates
+      : EMPTY_SUBORDINATES
+
+  const [teams, setTeams] = useState<TeamRow[]>([])
 
   useEffect(() => {
     if (staffState.status !== 'ready' || !isProfilesSupabaseConfigured()) {
@@ -39,15 +74,46 @@ export function ProactiveInitiativesListPage({ user }: Props) {
     void syncUserProfile(user)
   }, [user, staffState.status])
 
+  useEffect(() => {
+    let cancelled = false
+    void fetchTeamsAlphabetical().then((tr) => {
+      if (cancelled) return
+      if (tr.ok) setTeams(tr.teams)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const scope = useSupervisorScope(user, viewerStaff, subordinates, teams)
+
+  const subordinateIdsKey = useMemo(
+    () =>
+      subordinates
+        .map((s) => String(s.id))
+        .sort()
+        .join(','),
+    [subordinates],
+  )
+
   const [rows, setRows] = useState<ProactiveInitiativeRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showDeleted, setShowDeleted] = useState(false)
+  const [nameByUid, setNameByUid] = useState<Map<string, string>>(
+    () => new Map(),
+  )
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    void listProactiveInitiativesForUser(user.uid).then((r) => {
+    void (async () => {
+      const uids = await scope.resolveUids()
+      if (cancelled) return
+      const r = await listProactiveInitiativesForFirebaseUids(uids, {
+        includeDeleted: showDeleted,
+      })
       if (cancelled) return
       if (!r.ok) {
         setError(r.message)
@@ -56,11 +122,36 @@ export function ProactiveInitiativesListPage({ user }: Props) {
         setRows(r.rows)
       }
       setLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    user.uid,
+    scope.resolveUids,
+    scope.includeSubordinates,
+    scope.selectedTeamIds,
+    scope.selectedStaffIds,
+    showDeleted,
+    subordinateIdsKey,
+    viewerStaff.id,
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+    const uids = [...new Set(rows.map((r) => r.firebase_uid))]
+    if (uids.length === 0) {
+      setNameByUid(new Map())
+      return
+    }
+    void fetchCreatorDirectoryByFirebaseUids(uids).then((d) => {
+      if (cancelled) return
+      setNameByUid(d.fullNameByUid)
     })
     return () => {
       cancelled = true
     }
-  }, [user.uid])
+  }, [rows])
 
   const firebaseAuth = auth
   if (!firebaseAuth) {
@@ -99,10 +190,31 @@ export function ProactiveInitiativesListPage({ user }: Props) {
       <main className="dashboard-main">
         <section className="dashboard-panel activity-dashboard">
           <h2 className="dashboard-section-title">Your entries</h2>
-          <p className="activity-muted journal-list-intro">
-            Open a row to edit the title and details. Each entry records you as
-            the creator.
-          </p>
+
+          <SupervisorScopeControls
+            viewerStaff={viewerStaff}
+            idPrefix="proactive-scope"
+            hasSubordinates={scope.hasSubordinates}
+            includeSubordinates={scope.includeSubordinates}
+            onIncludeSubordinatesChange={scope.setIncludeSubordinates}
+            poolTeamRows={scope.poolTeamRows}
+            selectedTeamIds={scope.selectedTeamIds}
+            toggleTeam={scope.toggleTeam}
+            selectAllTeams={scope.selectAllTeams}
+            staffAfterTeams={scope.staffAfterTeams}
+            selectedStaffIds={scope.selectedStaffIds}
+            toggleStaff={scope.toggleStaff}
+            selectAllStaff={scope.selectAllStaff}
+          />
+
+          <label className="activity-show-deleted">
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => setShowDeleted(e.target.checked)}
+            />
+            <span>Show deleted entries</span>
+          </label>
 
           {loading ? (
             <p className="loading">Loading…</p>
@@ -110,28 +222,36 @@ export function ProactiveInitiativesListPage({ user }: Props) {
             <p className="feedback error">{error}</p>
           ) : rows.length === 0 ? (
             <p className="activity-muted">
-              No entries yet. Use <strong>Proactive Initiative and Activity</strong>{' '}
-              on the home page to create one.
+              No entries match your filters. Use{' '}
+              <strong>Proactive Initiative and Activity</strong> on the home
+              page to create one.
             </p>
           ) : (
             <ul className="activity-report-list">
-              {rows.map((row) => (
-                <li key={row.id}>
-                  <Link
-                    to={`/proactive/${row.id}`}
-                    className="activity-report-row"
-                  >
-                    <span className="activity-report-title">
-                      {row.title?.trim() || 'Untitled'}
-                    </span>
-                    <span className="activity-report-meta">
-                      Updated {formatWhen(row.updated_at)}
-                      {' · '}
-                      <span title={row.firebase_uid}>You</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
+              {rows.map((row) => {
+                const deleted = Boolean(row.deleted_at)
+                const ownerLabel =
+                  row.firebase_uid === user.uid
+                    ? 'You'
+                    : nameByUid.get(row.firebase_uid) ?? 'Colleague'
+                return (
+                  <li key={row.id}>
+                    <Link
+                      to={`/proactive/${row.id}`}
+                      className={`activity-report-row${deleted ? ' is-deleted' : ''}`}
+                    >
+                      <span className="activity-report-title">
+                        {row.title?.trim() || 'Untitled'}
+                      </span>
+                      <span className="activity-report-meta">
+                        Updated {formatWhen(row.updated_at)}
+                        {' · '}
+                        <span title={row.firebase_uid}>{ownerLabel}</span>
+                      </span>
+                    </Link>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>

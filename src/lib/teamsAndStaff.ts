@@ -13,6 +13,7 @@ export function parseStaffTeamIds(staff: StaffRow): (string | number)[] {
       .map((s) => s.trim())
       .filter(Boolean)
   }
+  if (typeof raw === 'string') return [raw.trim()].filter(Boolean)
   return [raw]
 }
 

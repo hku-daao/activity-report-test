@@ -119,7 +119,7 @@ export function Dashboard({ user }: Props) {
               <h2 className="dashboard-home-group-title">Create New</h2>
               <div className="dashboard-home-actions">
                 <div className="dashboard-cta">
-                  <Link to="/journal/today" className="dashboard-create-btn">
+                  <Link to="/journal" className="dashboard-create-btn">
                     Daily Journal
                   </Link>
                 </div>

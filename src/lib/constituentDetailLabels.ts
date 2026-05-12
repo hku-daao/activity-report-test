@@ -5,6 +5,8 @@
 
 /** Keys present in RPC detail but hidden in the pick-list UI. */
 export const CONSTITUENT_DETAIL_EXCLUDED_KEYS = new Set([
+  'CID',
+  'cid',
   'id',
   'title2',
   'isgroup',
@@ -85,6 +87,114 @@ const OVERRIDES: Record<string, string> = {
   donotemail: 'Do not email',
   donotphone: 'Do not phone',
   primary_business_id: 'Primary business ID',
+}
+
+/** HKU Foundation membership row keys from `get_hkuf` (see `003_get_hkuf.sql`). */
+export const HKUF_MEMBERSHIP_ORDER: string[] = [
+  'RECOGNITIONLEVEL',
+  'JOINDATE',
+  'TOTALAMOUNT',
+  'COMMENTS',
+]
+
+const HKUF_LABELS: Record<string, string> = {
+  RECOGNITIONLEVEL: 'Recognition level',
+  JOINDATE: 'Join date',
+  TOTALAMOUNT: 'Total amount',
+  COMMENTS: 'Comments',
+}
+
+/** Education history row keys from `get_education` (see `004_get_education.sql`). */
+export const EDUCATION_HISTORY_ORDER: string[] = [
+  'Class_Of',
+  'Preffered_Class_Of',
+  'Status',
+  'Faculty',
+  'Department',
+  'Curriculum',
+  'Curriculum_full_title',
+  'Curriculum_exit_full_title',
+  'major_minor',
+  'Result',
+  'Full_Part_time',
+  'Admission_Date',
+  'Graduate_Date',
+]
+
+const EDUCATION_LABELS: Record<string, string> = {
+  Class_Of: 'Class of',
+  Preffered_Class_Of: 'Preferred class of',
+  Status: 'Status',
+  Faculty: 'Faculty',
+  Department: 'Department',
+  Curriculum: 'Curriculum',
+  Curriculum_full_title: 'Programme / curriculum (full title)',
+  Curriculum_exit_full_title: 'Curriculum exit (full title)',
+  major_minor: 'Major / minor',
+  Result: 'Result',
+  Full_Part_time: 'Full / part-time',
+  Admission_Date: 'Admission date',
+  Graduate_Date: 'Graduate date',
+}
+
+/** One education history row for display (after HKU Foundation membership). */
+export function entriesForEducationHistoryRow(
+  row: Record<string, unknown>,
+): { key: string; label: string; value: string }[] {
+  const orderIndex = (k: string) => {
+    const i = EDUCATION_HISTORY_ORDER.indexOf(k)
+    return i === -1 ? 1000 : i
+  }
+  const keys = Object.keys(row).filter((k) => {
+    const v = row[k]
+    return v !== null && v !== undefined && String(v) !== ''
+  })
+  keys.sort((a, b) => {
+    const d = orderIndex(a) - orderIndex(b)
+    if (d !== 0) return d
+    return a.localeCompare(b, undefined, { sensitivity: 'base' })
+  })
+  return keys.map((key) => {
+    const raw = row[key]
+    return {
+      key,
+      label: EDUCATION_LABELS[key] ?? labelForConstituentDetailKey(key),
+      value:
+        typeof raw === 'number' || typeof raw === 'boolean'
+          ? String(raw)
+          : String(raw ?? '').trim() || '—',
+    }
+  })
+}
+
+/** One HKUF membership row for display (after view detail). */
+export function entriesForHkufMembershipRow(
+  row: Record<string, unknown>,
+): { key: string; label: string; value: string }[] {
+  const orderIndex = (k: string) => {
+    const i = HKUF_MEMBERSHIP_ORDER.indexOf(k)
+    return i === -1 ? 1000 : i
+  }
+  const keys = Object.keys(row).filter((k) => {
+    const v = row[k]
+    return v !== null && v !== undefined && String(v) !== ''
+  })
+  keys.sort((a, b) => {
+    const d = orderIndex(a) - orderIndex(b)
+    if (d !== 0) return d
+    return a.localeCompare(b, undefined, { sensitivity: 'base' })
+  })
+  return keys.map((key) => {
+    const raw = row[key]
+    return {
+      key,
+      label: HKUF_LABELS[key] ?? labelForConstituentDetailKey(key),
+      value:
+        typeof raw === 'number' || typeof raw === 'boolean'
+          ? String(raw)
+          : String(raw ?? '').trim() || '—',
+    }
+  })
 }
 
 function titleFromKey(k: string): string {

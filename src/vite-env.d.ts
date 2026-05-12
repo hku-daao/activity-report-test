@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_ACCESS_SUPABASE_ANON_KEY?: string
   readonly VITE_PROFILES_SUPABASE_URL?: string
   readonly VITE_PROFILES_SUPABASE_ANON_KEY?: string
+  /** Optional. When set, the session menu shows a Feedback link to this URL. */
+  readonly VITE_FEEDBACK_FORM_URL?: string
 }
 
 interface ImportMeta {

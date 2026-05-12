@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
-import { useMatch, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { auth, isFirebaseStorageBucketConfigured } from '../lib/firebase'
 import { isProfilesSupabaseConfigured } from '../lib/profilesSupabase'
 import { syncUserProfile } from '../lib/profile'
@@ -9,9 +9,10 @@ import { staffFullName } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import { listStoragePathsFromItems, type StorageAttachmentItem } from '../lib/attachmentItems'
 import {
-  fetchJournalByIdForUser,
-  getOrCreateTodayJournal,
+  fetchJournalByIdForViewer,
+  restoreDailyJournal,
   saveJournalBodyAndAttachments,
+  softDeleteDailyJournal,
   type DailyJournalRow,
 } from '../lib/dailyJournals'
 import { deleteStorageAttachment } from '../lib/proactiveAttachmentStorage'
@@ -29,9 +30,8 @@ type LoadState =
   | { status: 'ready'; row: DailyJournalRow }
 
 export function DailyJournalPage({ user }: Props) {
-  const todayMatch = useMatch('/journal/today')
   const { journalId } = useParams<{ journalId: string }>()
-  const isTodayRoute = Boolean(todayMatch)
+  const navigate = useNavigate()
 
   const { state: staffState } = useStaffDashboardState(user)
 
@@ -41,6 +41,17 @@ export function DailyJournalPage({ user }: Props) {
     }
     void syncUserProfile(user)
   }, [user, staffState.status])
+
+  const subordinates =
+    staffState.status === 'ready' ? staffState.data.subordinates : []
+  const subordinateIdsKey = useMemo(
+    () =>
+      subordinates
+        .map((s) => String(s.id))
+        .sort()
+        .join(','),
+    [subordinates],
+  )
 
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
   const [body, setBody] = useState('')
@@ -60,6 +71,8 @@ export function DailyJournalPage({ user }: Props) {
     text: string
   } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingEntry, setDeletingEntry] = useState(false)
+  const [restoring, setRestoring] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -78,21 +91,6 @@ export function DailyJournalPage({ user }: Props) {
         return
       }
 
-      if (isTodayRoute) {
-        const r = await getOrCreateTodayJournal(user)
-        if (cancelled) return
-        if (!r.ok) {
-          setLoad({ status: 'error', message: r.message })
-          return
-        }
-        setLoad({ status: 'ready', row: r.row })
-        setBody(r.row.body ?? '')
-        const att = r.row.attachment_items ?? []
-        setAttachments(att)
-        attachmentsRef.current = att
-        return
-      }
-
       if (!journalId?.trim()) {
         if (!cancelled) {
           setLoad({ status: 'error', message: 'Missing journal id.' })
@@ -100,7 +98,7 @@ export function DailyJournalPage({ user }: Props) {
         return
       }
 
-      const r = await fetchJournalByIdForUser(journalId, user.uid)
+      const r = await fetchJournalByIdForViewer(journalId, user, subordinates)
       if (cancelled) return
       if (!r.ok) {
         setLoad({ status: 'error', message: r.message })
@@ -117,7 +115,7 @@ export function DailyJournalPage({ user }: Props) {
     return () => {
       cancelled = true
     }
-  }, [user, isTodayRoute, journalId])
+  }, [user, journalId, staffState.status, subordinateIdsKey])
 
   const firebaseAuth = auth
   if (!firebaseAuth) {
@@ -138,6 +136,20 @@ export function DailyJournalPage({ user }: Props) {
 
   const handleSave = async () => {
     if (load.status !== 'ready') return
+    if (load.row.firebase_uid !== user.uid) {
+      setFeedback({
+        type: 'error',
+        text: 'You can only edit your own journal.',
+      })
+      return
+    }
+    if (load.row.deleted_at) {
+      setFeedback({
+        type: 'error',
+        text: 'This journal is deleted. Restore it to make changes.',
+      })
+      return
+    }
     setFeedback(null)
     setSaving(true)
     try {
@@ -172,6 +184,56 @@ export function DailyJournalPage({ user }: Props) {
       setSaving(false)
     }
   }
+
+  const handleSoftDelete = async () => {
+    if (load.status !== 'ready') return
+    if (load.row.firebase_uid !== user.uid) return
+    const ok = window.confirm(
+      'Delete this journal? It will stay in the database but disappear from your list unless you turn on “Show deleted entries” on the journals page.',
+    )
+    if (!ok) return
+    setFeedback(null)
+    setDeletingEntry(true)
+    const result = await softDeleteDailyJournal(load.row.id, user.uid)
+    setDeletingEntry(false)
+    if (result.ok) {
+      navigate('/journals', { replace: true })
+    } else {
+      setFeedback({ type: 'error', text: result.message })
+    }
+  }
+
+  const handleRestore = async () => {
+    if (load.status !== 'ready') return
+    if (load.row.firebase_uid !== user.uid) return
+    setFeedback(null)
+    setRestoring(true)
+    const result = await restoreDailyJournal(load.row.id, user.uid)
+    setRestoring(false)
+    if (result.ok) {
+      const now = new Date().toISOString()
+      setLoad({
+        status: 'ready',
+        row: {
+          ...load.row,
+          deleted_at: null,
+          updated_at: now,
+        },
+      })
+      setFeedback({ type: 'success', text: 'Restored.' })
+    } else {
+      setFeedback({ type: 'error', text: result.message })
+    }
+  }
+
+  const isDeleted =
+    load.status === 'ready' && Boolean(load.row.deleted_at)
+
+  const isSupervisorView =
+    load.status === 'ready' && load.row.firebase_uid !== user.uid
+
+  const readOnlyJournal =
+    isDeleted || isSupervisorView
 
   return (
     <div className="dashboard-page activity-form-page">
@@ -211,7 +273,9 @@ export function DailyJournalPage({ user }: Props) {
             <strong>{load.row.title}</strong>
             {' · '}
             Creator:{' '}
-            <span title={load.row.firebase_uid}>You</span>
+            <span title={load.row.firebase_uid}>
+              {isSupervisorView ? 'Colleague (read-only)' : 'You'}
+            </span>
             {' · '}
             Last updated{' '}
             {new Date(load.row.updated_at).toLocaleString(undefined, {
@@ -220,11 +284,25 @@ export function DailyJournalPage({ user }: Props) {
             })}
           </p>
 
+          {isDeleted ? (
+            <p className="feedback error" role="status">
+              This journal is deleted. Restore it to edit, or browse attachments
+              below.
+            </p>
+          ) : null}
+
+          {isSupervisorView && !isDeleted ? (
+            <p className="feedback error" role="status">
+              You are viewing a team member&rsquo;s journal (read-only).
+            </p>
+          ) : null}
+
           <label className="activity-field">
             <span className="activity-label">Journal</span>
             <textarea
               className="activity-textarea"
               rows={16}
+              readOnly={readOnlyJournal}
               value={body}
               onChange={(e) => {
                 const v = e.target.value
@@ -247,6 +325,7 @@ export function DailyJournalPage({ user }: Props) {
             isNewEntityRoute={false}
             hasPersistedRow
             persistMode="immediate"
+            readOnly={readOnlyJournal}
             setFeedback={setFeedback}
             persistAttachments={async (next) => {
               const r = await saveJournalBodyAndAttachments(
@@ -283,15 +362,40 @@ export function DailyJournalPage({ user }: Props) {
             </p>
           ) : null}
 
+          {!isDeleted && !isSupervisorView ? (
+            <div className="activity-edit-delete">
+              <button
+                type="button"
+                className="auth-submit activity-delete-btn"
+                disabled={saving || deletingEntry}
+                onClick={() => void handleSoftDelete()}
+              >
+                {deletingEntry ? 'Deleting…' : 'Delete journal'}
+              </button>
+            </div>
+          ) : null}
+
           <div className="activity-actions">
-            <button
-              type="button"
-              className="auth-submit"
-              disabled={saving}
-              onClick={() => void handleSave()}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            {isDeleted && !isSupervisorView ? (
+              <button
+                type="button"
+                className="auth-submit"
+                disabled={restoring}
+                onClick={() => void handleRestore()}
+              >
+                {restoring ? 'Restoring…' : 'Restore journal'}
+              </button>
+            ) : null}
+            {!isDeleted && !isSupervisorView ? (
+              <button
+                type="button"
+                className="auth-submit"
+                disabled={saving || deletingEntry}
+                onClick={() => void handleSave()}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

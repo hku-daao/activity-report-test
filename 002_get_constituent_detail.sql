@@ -13,6 +13,7 @@ AS $$
   SELECT to_jsonb(q)
   FROM (
     SELECT
+      v."ID"::uuid AS CID,
       v."LOOKUPID" AS Constituent_ID,
       v."FORMATTEDNAME" AS Formatted_Name,
       v."NICKNAME" AS Chinese_Name,
@@ -21,11 +22,14 @@ AS $$
       v."GENDER",
       v."AGE",
       v."CONSTITUENTTYPE" AS Constituent_Type,
-      string_agg(c."CONSTITUENCY", ', ') AS "CONSTITUENCY"
+--      string_agg(c."CONSTITUENCY", ', ') AS "CONSTITUENCY"
+      string_agg(c."Constituencies\Constituency", ', ') AS "CONSTITUENCY" 
     FROM public.v_query_constituent v
-    LEFT JOIN public.v_query_constituency c ON v."ID" = c."CONSTITUENTID"
+--    LEFT JOIN public.v_query_constituency c ON v."ID" = c."CONSTITUENTID"
+    LEFT JOIN public.hku_v_crm_constituency C ON v."LOOKUPID" = c."Lookup ID" 
     WHERE v."LOOKUPID" = NULLIF(btrim(p_lookup_id), '')
     GROUP BY
+	  v."ID",
       v."LOOKUPID",
       v."FORMATTEDNAME",
       v."NICKNAME",
@@ -39,6 +43,6 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION public.get_constituent_detail(text) IS
-  'jsonb: detail fields from v_query_constituent plus aggregated CONSTITUENCY from v_query_constituency.';
+  'jsonb: constituent fields plus CONSTITUENCY; includes CID (uuid, internal id) for joins such as get_hkuf.';
 
 GRANT EXECUTE ON FUNCTION public.get_constituent_detail(text) TO anon, authenticated;

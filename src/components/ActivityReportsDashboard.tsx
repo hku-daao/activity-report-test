@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { Link } from 'react-router-dom'
 import {
   fetchActivityReportsForUids,
   reportMatchesSearch,
-  resolveViewerFirebaseUids,
   type ActivityReportRow,
 } from '../lib/activityReports'
 import {
@@ -13,9 +12,12 @@ import {
   reportMatchesCreatorTeamFilter,
 } from '../lib/teamsAndStaff'
 import type { StaffRow, TeamRow } from '../lib/staffAccess'
+import { useSupervisorScope } from '../hooks/useSupervisorScope'
+import { SupervisorScopeControls } from './SupervisorScopeControls'
 
 type Props = {
   user: User
+  viewerStaff: StaffRow
   subordinates: StaffRow[]
 }
 
@@ -34,7 +36,11 @@ function isDeleted(row: ActivityReportRow): boolean {
   return Boolean(row.deleted_at)
 }
 
-export function ActivityReportsDashboard({ user, subordinates }: Props) {
+export function ActivityReportsDashboard({
+  user,
+  viewerStaff,
+  subordinates,
+}: Props) {
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [rows, setRows] = useState<ActivityReportRow[]>([])
   const [creatorTeamByUid, setCreatorTeamByUid] = useState<
@@ -47,14 +53,25 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
+  const [creatorTeamFilterIds, setCreatorTeamFilterIds] = useState<string[]>(
+    [],
+  )
+  const [creatorTeamFilterOpen, setCreatorTeamFilterOpen] = useState(false)
+  const creatorTeamFilterRef = useRef<HTMLDivElement>(null)
+  const creatorTeamFilterListId = 'activity-reports-creator-team-filter-list'
   const [showDeleted, setShowDeleted] = useState(false)
 
-  const subEmails = useMemo(
+  const scope = useSupervisorScope(user, viewerStaff, subordinates, teams)
+  const hasSubordinates = scope.hasSubordinates
+  const showCreatorTeamFilter =
+    !hasSubordinates || !scope.includeSubordinates
+
+  const subordinateIdsKey = useMemo(
     () =>
       subordinates
-        .map((s) => s.email?.trim())
-        .filter((e): e is string => Boolean(e)),
+        .map((s) => String(s.id))
+        .sort()
+        .join(','),
     [subordinates],
   )
 
@@ -69,7 +86,7 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
         return
       }
       setTeams(tr.teams)
-      setSelectedTeamIds(tr.teams.map((t) => String(t.team_id)))
+      setCreatorTeamFilterIds(tr.teams.map((t) => String(t.team_id)))
     })()
     return () => {
       cancelled = true
@@ -77,11 +94,30 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
   }, [])
 
   useEffect(() => {
+    if (!creatorTeamFilterOpen) return
+    const onDocMouseDown = (e: MouseEvent) => {
+      const el = creatorTeamFilterRef.current
+      if (el && !el.contains(e.target as Node)) {
+        setCreatorTeamFilterOpen(false)
+      }
+    }
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCreatorTeamFilterOpen(false)
+    }
+    document.addEventListener('mousedown', onDocMouseDown)
+    document.addEventListener('keydown', onDocKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown)
+      document.removeEventListener('keydown', onDocKeyDown)
+    }
+  }, [creatorTeamFilterOpen])
+
+  useEffect(() => {
     let cancelled = false
     void (async () => {
       setLoading(true)
       setError(null)
-      const uids = await resolveViewerFirebaseUids(user, subEmails)
+      const uids = await scope.resolveUids()
       if (cancelled) return
       const fr = await fetchActivityReportsForUids(uids)
       if (cancelled) return
@@ -96,7 +132,16 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
     return () => {
       cancelled = true
     }
-  }, [user, subEmails])
+  }, [
+    user,
+    scope.resolveUids,
+    scope.includeSubordinates,
+    scope.selectedTeamIds,
+    scope.selectedStaffIds,
+    hasSubordinates,
+    viewerStaff.id,
+    subordinateIdsKey,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -119,22 +164,24 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
     }
   }, [rows])
 
-  const teamSelectionParam = useMemo((): 'all' | string[] => {
+  const creatorTeamSelectionParam = useMemo((): 'all' | string[] => {
     if (teams.length === 0) return 'all'
-    if (selectedTeamIds.length === teams.length) return 'all'
-    return selectedTeamIds
-  }, [teams.length, selectedTeamIds])
+    if (creatorTeamFilterIds.length === teams.length) return 'all'
+    return creatorTeamFilterIds
+  }, [teams.length, creatorTeamFilterIds])
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
       if (!showDeleted && isDeleted(row)) return false
-      if (
-        !reportMatchesCreatorTeamFilter(
-          creatorTeamByUid.get(row.firebase_uid),
-          teamSelectionParam,
-        )
-      ) {
-        return false
+      if (showCreatorTeamFilter) {
+        if (
+          !reportMatchesCreatorTeamFilter(
+            creatorTeamByUid.get(row.firebase_uid),
+            creatorTeamSelectionParam,
+          )
+        ) {
+          return false
+        }
       }
       if (
         !reportMatchesSearch(
@@ -151,24 +198,29 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
     rows,
     creatorTeamByUid,
     creatorFullNameByUid,
-    teamSelectionParam,
+    creatorTeamSelectionParam,
     search,
     showDeleted,
+    showCreatorTeamFilter,
   ])
 
-  const toggleTeam = (teamId: string) => {
-    setSelectedTeamIds((prev) => {
-      const id = String(teamId)
-      if (prev.includes(id)) {
-        return prev.filter((x) => x !== id)
-      }
-      return [...prev, id]
-    })
+  const toggleCreatorTeam = (teamId: string) => {
+    const id = String(teamId)
+    setCreatorTeamFilterIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
   }
 
-  const selectAllTeams = () => {
-    setSelectedTeamIds(teams.map((t) => String(t.team_id)))
+  const selectAllCreatorTeams = () => {
+    setCreatorTeamFilterIds(teams.map((t) => String(t.team_id)))
   }
+
+  const creatorTeamFilterSummary = useMemo(() => {
+    if (teams.length === 0) return 'No teams available'
+    if (creatorTeamFilterIds.length === 0) return 'No teams selected'
+    if (creatorTeamFilterIds.length === teams.length) return 'All teams'
+    return `${creatorTeamFilterIds.length} team${creatorTeamFilterIds.length === 1 ? '' : 's'}`
+  }, [teams.length, creatorTeamFilterIds])
 
   const reportHref = (row: ActivityReportRow): string => {
     if (isDeleted(row)) return `/activity/${row.id}`
@@ -184,40 +236,94 @@ export function ActivityReportsDashboard({ user, subordinates }: Props) {
         Meeting / Engagement / Activity reports
       </h2>
 
+      <SupervisorScopeControls
+        viewerStaff={viewerStaff}
+        idPrefix="activity-reports-scope"
+        hasSubordinates={hasSubordinates}
+        includeSubordinates={scope.includeSubordinates}
+        onIncludeSubordinatesChange={scope.setIncludeSubordinates}
+        poolTeamRows={scope.poolTeamRows}
+        selectedTeamIds={scope.selectedTeamIds}
+        toggleTeam={scope.toggleTeam}
+        selectAllTeams={scope.selectAllTeams}
+        staffAfterTeams={scope.staffAfterTeams}
+        selectedStaffIds={scope.selectedStaffIds}
+        toggleStaff={scope.toggleStaff}
+        selectAllStaff={scope.selectAllStaff}
+      />
+
       <div className="activity-dashboard-controls">
-        <label className="activity-dashboard-field">
-          <span
-            className="activity-label"
-            title="Filter by the team of the person who created the report (from staff directory), not the team chosen on the form."
-          >
-            Creator’s team
-          </span>
-          <div className="activity-team-multiselect">
-            <button
-              type="button"
-              className="activity-team-all-btn"
-              onClick={selectAllTeams}
+        {showCreatorTeamFilter ? (
+          <label className="activity-dashboard-field">
+            <span
+              className="activity-label"
+              title="Filter by the team of the person who created the report (from staff directory), not the team chosen on the form."
             >
-              Select all teams
-            </button>
-            <div className="activity-team-checkboxes" role="group">
-              {teams.map((t) => {
-                const id = String(t.team_id)
-                const checked = selectedTeamIds.includes(id)
-                return (
-                  <label key={String(t.id)} className="activity-team-check">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleTeam(id)}
-                    />
-                    <span>{t.team_name?.trim() || id}</span>
-                  </label>
-                )
-              })}
+              Creator’s team
+            </span>
+            <div
+              className="activity-team-multiselect"
+              ref={creatorTeamFilterRef}
+            >
+              <button
+                type="button"
+                className="activity-team-dropdown-trigger"
+                aria-expanded={creatorTeamFilterOpen}
+                aria-haspopup="true"
+                aria-controls={creatorTeamFilterListId}
+                onClick={() => setCreatorTeamFilterOpen((o) => !o)}
+              >
+                <span className="activity-team-dropdown-summary">
+                  {creatorTeamFilterSummary}
+                </span>
+                <span className="activity-team-dropdown-chevron" aria-hidden>
+                  ▾
+                </span>
+              </button>
+              {creatorTeamFilterOpen ? (
+                <div
+                  id={creatorTeamFilterListId}
+                  className="activity-team-dropdown-panel"
+                  role="group"
+                  aria-label="Teams (creator)"
+                >
+                  <button
+                    type="button"
+                    className="activity-team-all-btn"
+                    onClick={() => {
+                      selectAllCreatorTeams()
+                    }}
+                  >
+                    Select all teams
+                  </button>
+                  <div className="activity-team-checkboxes" role="group">
+                    {teams.map((t) => {
+                      const id = String(t.team_id)
+                      const checked = creatorTeamFilterIds.includes(id)
+                      return (
+                        <label key={String(t.id)} className="activity-team-check">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleCreatorTeam(id)}
+                          />
+                          <span>{t.team_name?.trim() || id}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </div>
+          </label>
+        ) : (
+          <div className="activity-dashboard-field activity-dashboard-field--hint-only">
+            <span className="activity-muted activity-scope-hint">
+              Creator teams are narrowed by <strong>Teams in scope</strong>{' '}
+              above.
+            </span>
           </div>
-        </label>
+        )}
 
         <label className="activity-dashboard-field activity-dashboard-search">
           <span className="activity-label">Search</span>

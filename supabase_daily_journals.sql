@@ -36,3 +36,11 @@ create policy "daily_journals_allow_update_anon"
 drop policy if exists "daily_journals_allow_delete_anon" on public.daily_journals;
 create policy "daily_journals_allow_delete_anon"
   on public.daily_journals for delete to anon using (true);
+
+-- Soft delete (app marks removal without dropping the row).
+alter table public.daily_journals
+  add column if not exists deleted_at timestamptz;
+
+create index if not exists daily_journals_deleted_at_idx
+  on public.daily_journals (firebase_uid, journal_date desc)
+  where deleted_at is not null;

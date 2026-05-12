@@ -16,6 +16,8 @@ export type ConstituentLookupRow = {
 
 const SEARCH_RPC = 'search_constituents'
 const DETAIL_RPC = 'get_constituent_detail'
+const HKUF_RPC = 'get_hkuf'
+const EDUCATION_RPC = 'get_education'
 
 function rpcErrorSummary(eg: {
   message?: string
@@ -219,4 +221,129 @@ export async function getConstituentDetail(
     ok: true,
     detail: detail ?? {},
   }
+}
+
+/** Internal CRM constituent id (`CID` from `get_constituent_detail`) for HKUF, education, and other joins. */
+export function constituentInternalIdFromDetail(
+  detail: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!detail || typeof detail !== 'object') return null
+  const raw = detail.CID ?? detail.cid
+  if (raw == null || raw === '') return null
+  const s = String(raw).trim()
+  return s || null
+}
+
+/** Parses jsonb array (or single object) returned by RPCs such as `get_hkuf` / `get_education`. */
+function parseRpcJsonbRows(raw: unknown): Record<string, unknown>[] {
+  if (raw == null) return []
+  if (Array.isArray(raw)) {
+    return raw.filter(
+      (x): x is Record<string, unknown> =>
+        x != null && typeof x === 'object' && !Array.isArray(x),
+    )
+  }
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw) as unknown
+      return parseRpcJsonbRows(p)
+    } catch {
+      return []
+    }
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>
+    if (Object.keys(o).length === 0) return []
+    return [o]
+  }
+  return []
+}
+
+/**
+ * HKU Foundation membership rows via `get_hkuf(cid)` (see `003_get_hkuf.sql`).
+ * Returns zero or more active recognition rows for the programme.
+ */
+export async function getHkufMembership(
+  cid: string,
+): Promise<
+  | { ok: true; rows: Record<string, unknown>[] }
+  | { ok: false; message: string }
+> {
+  if (!profilesSupabase) {
+    return {
+      ok: false,
+      message: 'Supabase is not configured.',
+    }
+  }
+  const id = cid.trim()
+  if (!id) {
+    return { ok: false, message: 'Missing constituent internal ID.' }
+  }
+
+  const { data, error } = await profilesSupabase.rpc(HKUF_RPC, {
+    cid: id,
+  })
+
+  if (error) {
+    const eg = error as { message: string; details?: string; hint?: string; code?: string }
+    const summary = rpcErrorSummary(eg)
+
+    if (isLikelyMissingRpcOrStaleCache(eg, HKUF_RPC)) {
+      return {
+        ok: false,
+        message: `Could not load HKU Foundation membership (${summary}). Deploy ${HKUF_RPC} and NOTIFY pgrst, 'reload schema';`,
+      }
+    }
+    return {
+      ok: false,
+      message: summary,
+    }
+  }
+
+  const rows = parseRpcJsonbRows(data)
+  return { ok: true, rows }
+}
+
+/**
+ * Education history rows via `get_education(cid)` (see `004_get_education.sql`).
+ */
+export async function getEducationHistory(
+  cid: string,
+): Promise<
+  | { ok: true; rows: Record<string, unknown>[] }
+  | { ok: false; message: string }
+> {
+  if (!profilesSupabase) {
+    return {
+      ok: false,
+      message: 'Supabase is not configured.',
+    }
+  }
+  const id = cid.trim()
+  if (!id) {
+    return { ok: false, message: 'Missing constituent internal ID.' }
+  }
+
+  const { data, error } = await profilesSupabase.rpc(EDUCATION_RPC, {
+    cid: id,
+  })
+
+  if (error) {
+    const eg = error as { message: string; details?: string; hint?: string; code?: string }
+    const summary = rpcErrorSummary(eg)
+
+    if (isLikelyMissingRpcOrStaleCache(eg, EDUCATION_RPC)) {
+      return {
+        ok: false,
+        message: `Could not load education history (${summary}). Deploy ${EDUCATION_RPC} and NOTIFY pgrst, 'reload schema';`,
+      }
+    }
+    return {
+      ok: false,
+      message: summary,
+    }
+  }
+
+  const rows = parseRpcJsonbRows(data)
+  return { ok: true, rows }
 }

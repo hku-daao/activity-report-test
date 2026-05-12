@@ -7,6 +7,9 @@
       "hosting": {
         "activity-report-test": [
           "activity-report-test"
+        ],
+        "activity-report-production": [
+          "activity-report-production"
         ]
       }
     }

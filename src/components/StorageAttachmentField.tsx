@@ -42,6 +42,8 @@ export type StorageAttachmentFieldProps = {
   ) => Promise<{ ok: boolean; id?: string; message?: string }>
   onCreatedNavigate?: (id: string) => void
   onAttachmentsPersisted?: (next: StorageAttachmentItem[]) => void
+  /** When true, only open/download are allowed; no add, remove, or upload. */
+  readOnly?: boolean
 }
 
 export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
@@ -62,12 +64,14 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
     insertEntityWithAttachments,
     onCreatedNavigate,
     onAttachmentsPersisted,
+    readOnly = false,
   } = props
 
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null)
 
   async function persistImmediate(next: StorageAttachmentItem[]): Promise<boolean> {
+    if (readOnly) return false
     if (!persistAttachments) return false
     if (!isProfilesSupabaseConfigured()) {
       setFeedback({
@@ -92,6 +96,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
   }
 
   function removeLinkAt(i: number) {
+    if (readOnly) return
     const next = attachmentsRef.current.filter((_, j) => j !== i)
 
     if (
@@ -108,6 +113,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
   }
 
   async function removeFileAt(i: number) {
+    if (readOnly) return
     const item = attachmentsRef.current[i]
     const next = attachmentsRef.current.filter((_, j) => j !== i)
     const storageToRemove =
@@ -156,6 +162,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
                 type="text"
                 className="activity-input"
                 placeholder="e.g. shared folder"
+                readOnly={readOnly}
                 value={item.description}
                 onChange={(e) => {
                   const v = e.target.value
@@ -176,6 +183,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
                 className="activity-input"
                 autoComplete="off"
                 placeholder="https://…"
+                readOnly={readOnly}
                 value={item.url}
                 onChange={(e) => {
                   const v = e.target.value
@@ -201,13 +209,15 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
               >
                 Open link
               </button>
-              <button
-                type="button"
-                className="activity-icon-btn"
-                onClick={() => removeLinkAt(i)}
-              >
-                Remove
-              </button>
+              {!readOnly ? (
+                <button
+                  type="button"
+                  className="activity-icon-btn"
+                  onClick={() => removeLinkAt(i)}
+                >
+                  Remove
+                </button>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -218,6 +228,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
                 type="text"
                 className="activity-input"
                 placeholder="e.g. scanned signed form"
+                readOnly={readOnly}
                 value={item.description}
                 onChange={(e) => {
                   const v = e.target.value
@@ -248,7 +259,7 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
               ) : (
                 <p className="activity-muted">No file selected yet.</p>
               )}
-              {canUpload ? (
+              {canUpload && !readOnly ? (
                 <label className="activity-icon-btn activity-file-pick">
                   {uploadingIndex === i
                     ? 'Uploading…'
@@ -429,48 +440,52 @@ export function StorageAttachmentField(props: StorageAttachmentFieldProps) {
                   {downloadingPath === item.storagePath ? '…' : 'Download'}
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="activity-icon-btn"
-                onClick={() => void removeFileAt(i)}
-              >
-                Remove
-              </button>
+              {!readOnly ? (
+                <button
+                  type="button"
+                  className="activity-icon-btn"
+                  onClick={() => void removeFileAt(i)}
+                >
+                  Remove
+                </button>
+              ) : null}
             </div>
           </div>
         ),
       )}
 
-      <div className="proactive-attach-actions">
-        <button
-          type="button"
-          className="activity-add-btn"
-          onClick={() => {
-            setAttachments((a) => {
-              const n = [...a, newLinkAttachmentItem()]
-              attachmentsRef.current = n
-              return n
-            })
-          }}
-        >
-          Add link
-        </button>
-        {canUpload ? (
+      {!readOnly ? (
+        <div className="proactive-attach-actions">
           <button
             type="button"
             className="activity-add-btn"
             onClick={() => {
               setAttachments((a) => {
-                const n = [...a, newFileAttachmentItem()]
+                const n = [...a, newLinkAttachmentItem()]
                 attachmentsRef.current = n
                 return n
               })
             }}
           >
-            Add file (upload)
+            Add link
           </button>
-        ) : null}
-      </div>
+          {canUpload ? (
+            <button
+              type="button"
+              className="activity-add-btn"
+              onClick={() => {
+                setAttachments((a) => {
+                  const n = [...a, newFileAttachmentItem()]
+                  attachmentsRef.current = n
+                  return n
+                })
+              }}
+            >
+              Add file (upload)
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

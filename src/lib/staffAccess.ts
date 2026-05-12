@@ -23,6 +23,24 @@ export type StaffDashboard = {
   subordinates: StaffRow[]
 }
 
+/** Stable reference for hooks — do not use inline `[]` (new reference each render). */
+export const EMPTY_SUBORDINATES: StaffRow[] = []
+
+function normalizeKey(value: unknown): string | null {
+  if (value == null) return null
+  const s = String(value).trim()
+  return s === '' ? null : s
+}
+
+/**
+ * Value used with `subordinate.supervisor_id` / `subordinate.subordinate_id`:
+ * prefers `staff.app_id`; falls back to `staff.id` (UUID) when `app_id` is unset
+ * so rows can reference either identifier.
+ */
+export function staffRelationshipKey(staff: StaffRow): string | null {
+  return normalizeKey(staff.app_id) ?? normalizeKey(staff.id)
+}
+
 function displayLabel(s: StaffRow): string {
   const d = s.display_name?.trim()
   if (d) return d
@@ -33,6 +51,71 @@ function displayLabel(s: StaffRow): string {
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
+}
+
+/** Postgres uuid hex pattern for secondary lookup by `staff.id`. */
+const UUID_HEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function dedupeStaff(rows: StaffRow[]): StaffRow[] {
+  const map = new Map<string, StaffRow>()
+  for (const r of rows) {
+    map.set(String(r.id), r)
+  }
+  return [...map.values()]
+}
+
+/**
+ * Loads `staff` rows for ids stored in `subordinate` (typically `staff.app_id`,
+ * occasionally `staff.id` UUID depending on how keys were populated).
+ */
+async function fetchStaffForSubordinateKeys(
+  rawIds: (string | number)[],
+): Promise<StaffRow[]> {
+  if (!accessSupabase) return []
+
+  const keys = [
+    ...new Set(
+      rawIds.map((id) => normalizeKey(id)).filter((k): k is string => k != null),
+    ),
+  ]
+  if (keys.length === 0) return []
+
+  const { data: byApp, error: appErr } = await accessSupabase
+    .from('staff')
+    .select('*')
+    .in('app_id', keys)
+
+  if (appErr) {
+    return []
+  }
+
+  let rows: StaffRow[] = [...((byApp ?? []) as StaffRow[])]
+
+  function rowMatchesKey(r: StaffRow, k: string): boolean {
+    return normalizeKey(r.app_id) === k || normalizeKey(r.id) === k
+  }
+
+  const satisfied = new Set<string>()
+  for (const k of keys) {
+    if (rows.some((r) => rowMatchesKey(r, k))) {
+      satisfied.add(k)
+    }
+  }
+
+  const stillNeeded = keys.filter((k) => !satisfied.has(k))
+  const uuidKeys = stillNeeded.filter((k) => UUID_HEX.test(k))
+
+  if (uuidKeys.length > 0) {
+    const { data: byPk } = await accessSupabase
+      .from('staff')
+      .select('*')
+      .in('id', uuidKeys)
+
+    rows.push(...((byPk ?? []) as StaffRow[]))
+  }
+
+  return dedupeStaff(rows)
 }
 
 export async function loadStaffDashboard(
@@ -91,11 +174,12 @@ async function buildDashboard(
   }
 
   let team: TeamRow | null = null
-  if (staff.team_id != null && staff.team_id !== '') {
+  const teamKey = normalizeKey(staff.team_id)
+  if (teamKey) {
     const { data: teamRow, error: teamError } = await accessSupabase
       .from('team')
       .select('*')
-      .eq('team_id', staff.team_id)
+      .eq('team_id', teamKey)
       .maybeSingle()
 
     if (teamError) {
@@ -104,15 +188,15 @@ async function buildDashboard(
     team = teamRow as TeamRow | null
   }
 
-  const appId = staff.app_id
+  const relKey = staffRelationshipKey(staff)
   let supervisors: StaffRow[] = []
   let subordinates: StaffRow[] = []
 
-  if (appId != null && appId !== '') {
+  if (relKey) {
     const { data: supRows, error: supErr } = await accessSupabase
       .from('subordinate')
       .select('supervisor_id')
-      .eq('subordinate_id', appId)
+      .eq('subordinate_id', relKey)
 
     if (supErr) {
       return { ok: false, reason: 'error', message: supErr.message }
@@ -121,21 +205,13 @@ async function buildDashboard(
     const supIds = [
       ...new Set(
         (supRows ?? [])
-          .map((r: { supervisor_id: unknown }) => r.supervisor_id)
-          .filter((id) => id != null && id !== ''),
+          .map((r: { supervisor_id: unknown }) => normalizeKey(r.supervisor_id))
+          .filter((id): id is string => id != null),
       ),
-    ] as (string | number)[]
+    ]
 
     if (supIds.length > 0) {
-      const { data: supStaff, error: supStaffErr } = await accessSupabase
-        .from('staff')
-        .select('*')
-        .in('app_id', supIds)
-
-      if (supStaffErr) {
-        return { ok: false, reason: 'error', message: supStaffErr.message }
-      }
-      supervisors = (supStaff ?? []) as StaffRow[]
+      supervisors = await fetchStaffForSubordinateKeys(supIds)
       supervisors.sort((a, b) =>
         displayLabel(a).localeCompare(displayLabel(b), undefined, {
           sensitivity: 'base',
@@ -146,7 +222,7 @@ async function buildDashboard(
     const { data: subRows, error: subErr } = await accessSupabase
       .from('subordinate')
       .select('subordinate_id')
-      .eq('supervisor_id', appId)
+      .eq('supervisor_id', relKey)
 
     if (subErr) {
       return { ok: false, reason: 'error', message: subErr.message }
@@ -155,21 +231,13 @@ async function buildDashboard(
     const subIds = [
       ...new Set(
         (subRows ?? [])
-          .map((r: { subordinate_id: unknown }) => r.subordinate_id)
-          .filter((id) => id != null && id !== ''),
+          .map((r: { subordinate_id: unknown }) => normalizeKey(r.subordinate_id))
+          .filter((id): id is string => id != null),
       ),
-    ] as (string | number)[]
+    ]
 
     if (subIds.length > 0) {
-      const { data: subStaff, error: subStaffErr } = await accessSupabase
-        .from('staff')
-        .select('*')
-        .in('app_id', subIds)
-
-      if (subStaffErr) {
-        return { ok: false, reason: 'error', message: subStaffErr.message }
-      }
-      subordinates = (subStaff ?? []) as StaffRow[]
+      subordinates = await fetchStaffForSubordinateKeys(subIds)
       subordinates.sort((a, b) =>
         displayLabel(a).localeCompare(displayLabel(b), undefined, {
           sensitivity: 'base',

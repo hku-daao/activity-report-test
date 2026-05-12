@@ -9,10 +9,12 @@ import { ActivityReportViewPage } from './components/ActivityReportViewPage'
 import { CreateActivityReportPage } from './components/CreateActivityReportPage'
 import { ActivityReportsListPage } from './components/ActivityReportsListPage'
 import { Dashboard } from './components/Dashboard'
+import { DailyJournalChooseDatePage } from './components/DailyJournalChooseDatePage'
 import { DailyJournalPage } from './components/DailyJournalPage'
 import { JournalsListPage } from './components/JournalsListPage'
 import { ProactiveInitiativeEditorPage } from './components/ProactiveInitiativeEditorPage'
 import { ProactiveInitiativesListPage } from './components/ProactiveInitiativesListPage'
+import { SessionLayout } from './components/SessionLayout'
 import './App.css'
 
 function App() {
@@ -51,135 +53,68 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route
-          path="/"
-          element={
-            <div className={user ? 'app-root app-root--session' : 'app-root'}>
-              {user ? <Dashboard user={user} /> : <AuthPage />}
-            </div>
-          }
-        />
-        <Route
-          path="/journal/today"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <DailyJournalPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/journal/:journalId"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <DailyJournalPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/journals"
-          element={
-            user ? (
-              <div className="app-root app-root--session">
-                <JournalsListPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/proactive/new"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <ProactiveInitiativeEditorPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/proactive/:initiativeId"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <ProactiveInitiativeEditorPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/proactive"
-          element={
-            user ? (
-              <div className="app-root app-root--session">
-                <ProactiveInitiativesListPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/activity/reports"
-          element={
-            user ? (
-              <div className="app-root app-root--session">
-                <ActivityReportsListPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/activity/new"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <CreateActivityReportPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/activity/:id/edit"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <CreateActivityReportPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/activity/:id"
-          element={
-            user ? (
-              <div className="app-root app-root--session app-root--wide">
-                <ActivityReportViewPage user={user} />
-              </div>
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {!user ? (
+          <>
+            <Route
+              path="/"
+              element={
+                <div className="app-root">
+                  <AuthPage />
+                </div>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </>
+        ) : (
+          <Route element={<SessionLayout />}>
+            <Route path="/" element={<Dashboard user={user} />} />
+            <Route
+              path="/journal"
+              element={<DailyJournalChooseDatePage user={user} />}
+            />
+            <Route
+              path="/journal/today"
+              element={<Navigate to="/journal" replace />}
+            />
+            <Route
+              path="/journal/:journalId"
+              element={<DailyJournalPage user={user} />}
+            />
+            <Route
+              path="/journals"
+              element={<JournalsListPage user={user} />}
+            />
+            <Route
+              path="/proactive/new"
+              element={<ProactiveInitiativeEditorPage user={user} />}
+            />
+            <Route
+              path="/proactive/:initiativeId"
+              element={<ProactiveInitiativeEditorPage user={user} />}
+            />
+            <Route
+              path="/proactive"
+              element={<ProactiveInitiativesListPage user={user} />}
+            />
+            <Route
+              path="/activity/reports"
+              element={<ActivityReportsListPage user={user} />}
+            />
+            <Route
+              path="/activity/new"
+              element={<CreateActivityReportPage user={user} />}
+            />
+            <Route
+              path="/activity/:id/edit"
+              element={<CreateActivityReportPage user={user} />}
+            />
+            <Route
+              path="/activity/:id"
+              element={<ActivityReportViewPage user={user} />}
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        )}
       </Routes>
     </BrowserRouter>
   )

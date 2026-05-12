@@ -5,7 +5,9 @@ import {
   serializeAttachmentForDb,
   type StorageAttachmentItem,
 } from './attachmentItems'
+import { fetchFirebaseUidsForEmails } from './profile'
 import { profilesSupabase } from './profilesSupabase'
+import type { StaffRow } from './staffAccess'
 
 export type ProactiveAttachmentItem = StorageAttachmentItem
 
@@ -18,6 +20,8 @@ export type ProactiveInitiativeRow = {
   updated_at: string
   /** Normalized; empty if the column is missing. */
   attachment_items: ProactiveAttachmentItem[]
+  /** Set when the entry is soft-deleted (still in DB). */
+  deleted_at?: string | null
 }
 
 function normalizeInitiativeRow(
@@ -31,6 +35,7 @@ function normalizeInitiativeRow(
     body,
     created_at,
     updated_at,
+    deleted_at,
   } = data
   return {
     id: String(id),
@@ -40,6 +45,10 @@ function normalizeInitiativeRow(
     created_at: String(created_at ?? ''),
     updated_at: String(updated_at ?? ''),
     attachment_items: parsed ?? [],
+    deleted_at:
+      deleted_at === null || deleted_at === undefined
+        ? null
+        : String(deleted_at),
   }
 }
 
@@ -73,6 +82,45 @@ export async function fetchInitiativeByIdForUser(
     return { ok: false, message: 'You can only open your own entries.' }
   }
   return { ok: true, row }
+}
+
+/** Owner or a listed subordinate (supervisor view). */
+export async function fetchInitiativeByIdForViewer(
+  initiativeId: string,
+  user: User,
+  subordinates: StaffRow[],
+): Promise<
+  { ok: true; row: ProactiveInitiativeRow } | { ok: false; message: string }
+> {
+  if (!profilesSupabase) {
+    return { ok: false, message: 'Profiles Supabase is not configured.' }
+  }
+  const id = initiativeId.trim()
+  const { data, error } = await profilesSupabase
+    .from('proactive_initiatives')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, message: error.message }
+  }
+  if (!data) {
+    return { ok: false, message: 'Entry not found.' }
+  }
+  const row = normalizeInitiativeRow(data as Record<string, unknown>)
+  if (String(row.firebase_uid).trim() === user.uid.trim()) {
+    return { ok: true, row }
+  }
+  const emails = subordinates
+    .map((s) => s.email?.trim().toLowerCase())
+    .filter((e): e is string => Boolean(e))
+  const subUids =
+    emails.length > 0 ? await fetchFirebaseUidsForEmails(emails) : []
+  if (subUids.includes(row.firebase_uid)) {
+    return { ok: true, row }
+  }
+  return { ok: false, message: 'You can only open your own entries.' }
 }
 
 export async function insertProactiveInitiative(
@@ -134,6 +182,7 @@ export async function updateProactiveInitiative(
     })
     .eq('id', id)
     .eq('firebase_uid', uid)
+    .is('deleted_at', null)
     .select('id')
     .maybeSingle()
 
@@ -152,6 +201,7 @@ export async function updateProactiveInitiative(
 
 export async function listProactiveInitiativesForUser(
   firebaseUid: string,
+  options?: { includeDeleted?: boolean },
 ): Promise<
   { ok: true; rows: ProactiveInitiativeRow[] } | { ok: false; message: string }
 > {
@@ -159,11 +209,15 @@ export async function listProactiveInitiativesForUser(
     return { ok: false, message: 'Profiles Supabase is not configured.' }
   }
   const uid = firebaseUid.trim()
-  const { data, error } = await profilesSupabase
+  let q = profilesSupabase
     .from('proactive_initiatives')
     .select('*')
     .eq('firebase_uid', uid)
     .order('updated_at', { ascending: false })
+  if (!options?.includeDeleted) {
+    q = q.is('deleted_at', null)
+  }
+  const { data, error } = await q
 
   if (error) {
     return { ok: false, message: error.message }
@@ -172,4 +226,95 @@ export async function listProactiveInitiativesForUser(
     normalizeInitiativeRow(d as Record<string, unknown>),
   )
   return { ok: true, rows }
+}
+
+export async function listProactiveInitiativesForFirebaseUids(
+  firebaseUids: string[],
+  options?: { includeDeleted?: boolean },
+): Promise<
+  { ok: true; rows: ProactiveInitiativeRow[] } | { ok: false; message: string }
+> {
+  if (!profilesSupabase) {
+    return { ok: false, message: 'Profiles Supabase is not configured.' }
+  }
+  const uids = [...new Set(firebaseUids.map((u) => u.trim()).filter(Boolean))]
+  if (uids.length === 0) {
+    return { ok: true, rows: [] }
+  }
+  let q = profilesSupabase
+    .from('proactive_initiatives')
+    .select('*')
+    .in('firebase_uid', uids)
+    .order('updated_at', { ascending: false })
+  if (!options?.includeDeleted) {
+    q = q.is('deleted_at', null)
+  }
+  const { data, error } = await q
+
+  if (error) {
+    return { ok: false, message: error.message }
+  }
+  const rows = (data ?? []).map((d) =>
+    normalizeInitiativeRow(d as Record<string, unknown>),
+  )
+  return { ok: true, rows }
+}
+
+export async function softDeleteProactiveInitiative(
+  initiativeId: string,
+  firebaseUid: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!profilesSupabase) {
+    return { ok: false, message: 'Profiles Supabase is not configured.' }
+  }
+  const id = initiativeId.trim()
+  const uid = firebaseUid.trim()
+  const now = new Date().toISOString()
+  const { data, error } = await profilesSupabase
+    .from('proactive_initiatives')
+    .update({ deleted_at: now, updated_at: now })
+    .eq('id', id)
+    .eq('firebase_uid', uid)
+    .is('deleted_at', null)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, message: error.message }
+  }
+  if (!data?.id) {
+    return {
+      ok: false,
+      message:
+        'Could not delete (no row updated). The entry may already be deleted, or the deleted_at column is missing — run supabase_proactive_initiatives.sql on your database.',
+    }
+  }
+  return { ok: true }
+}
+
+export async function restoreProactiveInitiative(
+  initiativeId: string,
+  firebaseUid: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!profilesSupabase) {
+    return { ok: false, message: 'Profiles Supabase is not configured.' }
+  }
+  const id = initiativeId.trim()
+  const uid = firebaseUid.trim()
+  const now = new Date().toISOString()
+  const { data, error } = await profilesSupabase
+    .from('proactive_initiatives')
+    .update({ deleted_at: null, updated_at: now })
+    .eq('id', id)
+    .eq('firebase_uid', uid)
+    .select('id')
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, message: error.message }
+  }
+  if (!data?.id) {
+    return { ok: false, message: 'Could not restore entry.' }
+  }
+  return { ok: true }
 }

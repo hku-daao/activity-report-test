@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from 'firebase/auth'
 import { signOut } from 'firebase/auth'
 import { useMatch, useNavigate, useParams } from 'react-router-dom'
@@ -8,9 +8,11 @@ import { syncUserProfile } from '../lib/profile'
 import { staffFullName } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import {
-  fetchInitiativeByIdForUser,
+  fetchInitiativeByIdForViewer,
   insertProactiveInitiative,
   listStoragePathsFromItems,
+  restoreProactiveInitiative,
+  softDeleteProactiveInitiative,
   updateProactiveInitiative,
   type ProactiveAttachmentItem,
   type ProactiveInitiativeRow,
@@ -52,6 +54,17 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
     void syncUserProfile(user)
   }, [user, staffState.status])
 
+  const subordinates =
+    staffState.status === 'ready' ? staffState.data.subordinates : []
+  const subordinateIdsKey = useMemo(
+    () =>
+      subordinates
+        .map((s) => String(s.id))
+        .sort()
+        .join(','),
+    [subordinates],
+  )
+
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(!isNewRoute)
   const [row, setRow] = useState<ProactiveInitiativeRow | null>(null)
@@ -65,6 +78,8 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
     text: string
   } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingEntry, setDeletingEntry] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const attachmentsRef = useRef(attachments)
   const rowRef = useRef(row)
   const titleRef = useRef(title)
@@ -105,29 +120,31 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
     }
 
     setLoading(true)
-    void fetchInitiativeByIdForUser(initiativeId, user.uid).then((r) => {
-      if (cancelled) return
-      if (!r.ok) {
-        setLoadError(r.message)
-        setRow(null)
-      } else {
-        setRow(r.row)
-        setTitle(r.row.title ?? '')
-        setBody(r.row.body ?? '')
-        const loaded = (
-          r.row.attachment_items && r.row.attachment_items.length > 0
-            ? r.row.attachment_items
-            : []
-        ) as ProactiveAttachmentItem[]
-        setAttachments(loaded)
-        attachmentsRef.current = loaded
-      }
-      setLoading(false)
-    })
+    void fetchInitiativeByIdForViewer(initiativeId, user, subordinates).then(
+      (r) => {
+        if (cancelled) return
+        if (!r.ok) {
+          setLoadError(r.message)
+          setRow(null)
+        } else {
+          setRow(r.row)
+          setTitle(r.row.title ?? '')
+          setBody(r.row.body ?? '')
+          const loaded = (
+            r.row.attachment_items && r.row.attachment_items.length > 0
+              ? r.row.attachment_items
+              : []
+          ) as ProactiveAttachmentItem[]
+          setAttachments(loaded)
+          attachmentsRef.current = loaded
+        }
+        setLoading(false)
+      },
+    )
     return () => {
       cancelled = true
     }
-  }, [isNewRoute, initiativeId, user.uid])
+  }, [isNewRoute, initiativeId, user, subordinateIdsKey, staffState.status])
 
   const firebaseAuth = auth
   if (!firebaseAuth) {
@@ -167,6 +184,20 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
       setFeedback({
         type: 'error',
         text: 'Profiles Supabase is not configured.',
+      })
+      return
+    }
+    if (!isNewRoute && row != null && row.firebase_uid !== user.uid) {
+      setFeedback({
+        type: 'error',
+        text: 'You can only edit your own entries.',
+      })
+      return
+    }
+    if (row?.deleted_at) {
+      setFeedback({
+        type: 'error',
+        text: 'This entry is deleted. Restore it to make changes.',
       })
       return
     }
@@ -226,6 +257,47 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
     }
   }
 
+  const isDeleted = !isNewRoute && Boolean(row?.deleted_at)
+
+  const isSupervisorView =
+    !isNewRoute && row != null && row.firebase_uid !== user.uid
+
+  const handleSoftDelete = async () => {
+    if (!row || row.firebase_uid !== user.uid) return
+    const ok = window.confirm(
+      'Delete this entry? It will stay in the database but disappear from your list unless you turn on “Show deleted entries” on the dashboard.',
+    )
+    if (!ok) return
+    setFeedback(null)
+    setDeletingEntry(true)
+    const result = await softDeleteProactiveInitiative(row.id, user.uid)
+    setDeletingEntry(false)
+    if (result.ok) {
+      navigate('/proactive', { replace: true })
+    } else {
+      setFeedback({ type: 'error', text: result.message })
+    }
+  }
+
+  const handleRestore = async () => {
+    if (!row || row.firebase_uid !== user.uid) return
+    setFeedback(null)
+    setRestoring(true)
+    const result = await restoreProactiveInitiative(row.id, user.uid)
+    setRestoring(false)
+    if (result.ok) {
+      const now = new Date().toISOString()
+      setRow({
+        ...row,
+        deleted_at: null,
+        updated_at: now,
+      })
+      setFeedback({ type: 'success', text: 'Restored.' })
+    } else {
+      setFeedback({ type: 'error', text: result.message })
+    }
+  }
+
   return (
     <div className="dashboard-page activity-form-page">
       <header className="dashboard-topbar">
@@ -263,7 +335,9 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
           {!isNewRoute && row ? (
             <p className="activity-muted journal-meta">
               Creator:{' '}
-              <span title={row.firebase_uid}>You</span>
+              <span title={row.firebase_uid}>
+                {isSupervisorView ? 'Colleague (read-only)' : 'You'}
+              </span>
               {' · '}
               Last updated{' '}
               {new Date(row.updated_at).toLocaleString(undefined, {
@@ -278,11 +352,25 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
             </p>
           )}
 
+          {isDeleted ? (
+            <p className="feedback error" role="status">
+              This entry is deleted. Restore it to edit, or browse attachments
+              below.
+            </p>
+          ) : null}
+
+          {isSupervisorView && !isDeleted ? (
+            <p className="feedback error" role="status">
+              You are viewing a team member&rsquo;s entry (read-only).
+            </p>
+          ) : null}
+
           <label className="activity-field">
             <span className="activity-label">Title</span>
             <input
               type="text"
               className="activity-input"
+              readOnly={isDeleted || isSupervisorView}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Outreach to partner orgs — Q2 follow-up"
@@ -294,6 +382,7 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
             <textarea
               className="activity-textarea"
               rows={16}
+              readOnly={isDeleted || isSupervisorView}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Describe the initiative or activity…"
@@ -316,6 +405,7 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
             isNewEntityRoute={isNewRoute}
             hasPersistedRow={Boolean(!isNewRoute && row)}
             persistMode="immediate"
+            readOnly={isDeleted || isSupervisorView}
             setFeedback={setFeedback}
             persistAttachments={async (next) => {
               const cur = rowRef.current
@@ -369,15 +459,40 @@ export function ProactiveInitiativeEditorPage({ user }: Props) {
             </p>
           ) : null}
 
+          {!isNewRoute && row && !isDeleted && !isSupervisorView ? (
+            <div className="activity-edit-delete">
+              <button
+                type="button"
+                className="auth-submit activity-delete-btn"
+                disabled={saving || deletingEntry}
+                onClick={() => void handleSoftDelete()}
+              >
+                {deletingEntry ? 'Deleting…' : 'Delete entry'}
+              </button>
+            </div>
+          ) : null}
+
           <div className="activity-actions">
-            <button
-              type="button"
-              className="auth-submit"
-              disabled={saving}
-              onClick={() => void handleSave()}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            {isDeleted && !isSupervisorView ? (
+              <button
+                type="button"
+                className="auth-submit"
+                disabled={restoring}
+                onClick={() => void handleRestore()}
+              >
+                {restoring ? 'Restoring…' : 'Restore entry'}
+              </button>
+            ) : null}
+            {!isDeleted && !isSupervisorView ? (
+              <button
+                type="button"
+                className="auth-submit"
+                disabled={saving || deletingEntry}
+                onClick={() => void handleSave()}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

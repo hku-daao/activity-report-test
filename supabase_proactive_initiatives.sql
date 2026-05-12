@@ -45,3 +45,11 @@ create policy "proactive_initiatives_allow_update_anon"
 drop policy if exists "proactive_initiatives_allow_delete_anon" on public.proactive_initiatives;
 create policy "proactive_initiatives_allow_delete_anon"
   on public.proactive_initiatives for delete to anon using (true);
+
+-- Soft delete (app marks removal without dropping the row).
+alter table public.proactive_initiatives
+  add column if not exists deleted_at timestamptz;
+
+create index if not exists proactive_initiatives_deleted_at_idx
+  on public.proactive_initiatives (firebase_uid, updated_at desc)
+  where deleted_at is not null;

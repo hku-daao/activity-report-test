@@ -114,6 +114,7 @@ export function ActivityReportsListPage({ user }: Props) {
         {state.status === 'ready' ? (
           <ActivityReportsDashboard
             user={user}
+            viewerStaff={state.data.staff}
             subordinates={state.data.subordinates}
           />
         ) : null}

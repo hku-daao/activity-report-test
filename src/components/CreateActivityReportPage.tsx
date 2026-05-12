@@ -24,9 +24,16 @@ import {
   softDeleteActivityReport,
   type ActivityReportFormState,
 } from '../lib/activityReports'
-import { entriesForConstituentDetail } from '../lib/constituentDetailLabels'
 import {
+  entriesForConstituentDetail,
+  entriesForEducationHistoryRow,
+  entriesForHkufMembershipRow,
+} from '../lib/constituentDetailLabels'
+import {
+  constituentInternalIdFromDetail,
   getConstituentDetail,
+  getEducationHistory,
+  getHkufMembership,
   searchConstituents,
   type ConstituentLookupRow,
 } from '../lib/constituentLookup'
@@ -1087,20 +1094,112 @@ function ConstituentPickList({
   >({})
   const detailByIdRef = useRef(detailById)
   detailByIdRef.current = detailById
+  const [hkufByLookupId, setHkufByLookupId] = useState<
+    Record<string, Record<string, unknown>[]>
+  >({})
+  const [hkufLoadingId, setHkufLoadingId] = useState<string | null>(null)
+  const [hkufErrorById, setHkufErrorById] = useState<
+    Record<string, string>
+  >({})
+  const [educationByLookupId, setEducationByLookupId] = useState<
+    Record<string, Record<string, unknown>[]>
+  >({})
+  const [educationLoadingId, setEducationLoadingId] = useState<string | null>(
+    null,
+  )
+  const [educationErrorById, setEducationErrorById] = useState<
+    Record<string, string>
+  >({})
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
   const [detailErrorById, setDetailErrorById] = useState<
     Record<string, string>
   >({})
 
-  const loadDetail = useCallback(async (lookupId: string) => {
-    if (!lookupId || detailByIdRef.current[lookupId]) return
-    setDetailLoadingId(lookupId)
-    const res = await getConstituentDetail(lookupId)
-    setDetailLoadingId((cur) => (cur === lookupId ? null : cur))
-    if (res.ok) {
-      setDetailById((d) => ({ ...d, [lookupId]: res.detail }))
+  /** Optional `cidOverride` avoids reading `detailByIdRef` before React applies `setDetailById`. */
+  const loadHkufForLookup = useCallback(
+    async (lookupId: string, cidOverride?: string | null) => {
+      const resolved =
+        cidOverride !== undefined
+          ? cidOverride && String(cidOverride).trim()
+            ? String(cidOverride).trim()
+            : null
+          : constituentInternalIdFromDetail(
+              detailByIdRef.current[lookupId],
+            )
+      if (!resolved) {
+        setHkufErrorById((e) => ({
+          ...e,
+          [lookupId]:
+            'Internal constituent ID (CID) is missing; cannot load membership.',
+        }))
+        return
+      }
+      setHkufLoadingId(lookupId)
+      setHkufErrorById((e) => {
+        const next = { ...e }
+        delete next[lookupId]
+        return next
+      })
+      const hk = await getHkufMembership(resolved)
+      setHkufLoadingId((cur) => (cur === lookupId ? null : cur))
+      if (hk.ok) {
+        setHkufByLookupId((h) => ({ ...h, [lookupId]: hk.rows }))
+      } else {
+        setHkufErrorById((e) => ({ ...e, [lookupId]: hk.message }))
+      }
+    },
+    [],
+  )
+
+  const loadDetail = useCallback(
+    async (lookupId: string) => {
+      if (!lookupId || detailByIdRef.current[lookupId]) return
+      setDetailLoadingId(lookupId)
+      const res = await getConstituentDetail(lookupId)
+      setDetailLoadingId((cur) => (cur === lookupId ? null : cur))
+      if (res.ok) {
+        setDetailById((d) => ({ ...d, [lookupId]: res.detail }))
+        const cid = constituentInternalIdFromDetail(res.detail)
+        if (!cid) {
+          setHkufByLookupId((h) => ({ ...h, [lookupId]: [] }))
+          setHkufErrorById((e) => {
+            const next = { ...e }
+            delete next[lookupId]
+            return next
+          })
+        } else {
+          await loadHkufForLookup(lookupId, cid)
+        }
+      } else {
+        setDetailErrorById((e) => ({ ...e, [lookupId]: res.message }))
+      }
+    },
+    [loadHkufForLookup],
+  )
+
+  const loadEducationForLookup = useCallback(async (lookupId: string) => {
+    const detail = detailByIdRef.current[lookupId]
+    const cid = constituentInternalIdFromDetail(detail)
+    if (!cid) {
+      setEducationErrorById((e) => ({
+        ...e,
+        [lookupId]:
+          'Internal constituent ID (CID) is missing; cannot load education history.',
+      }))
+      return
+    }
+    setEducationLoadingId(lookupId)
+    setEducationErrorById((e) => {
+      const next = { ...e }
+      delete next[lookupId]
+      return next
+    })
+    const ed = await getEducationHistory(cid)
+    setEducationLoadingId((cur) => (cur === lookupId ? null : cur))
+    if (ed.ok) {
+      setEducationByLookupId((h) => ({ ...h, [lookupId]: ed.rows }))
     } else {
-      setDetailErrorById((e) => ({ ...e, [lookupId]: res.message }))
+      setEducationErrorById((e) => ({ ...e, [lookupId]: ed.message }))
     }
   }, [])
 
@@ -1121,10 +1220,7 @@ function ConstituentPickList({
             Several records matched ‘{name}’. Please select the correct one.
           </>
         ) : (
-          <>
-            One record matched ‘{name}’. Details below use{' '}
-            <code className="activity-code-inline">get_constituent_detail</code>.
-          </>
+          <>One record matched ‘{name}’.</>
         )}
       </p>
       <ul className="constituent-lookup-matches" role="list">
@@ -1142,6 +1238,16 @@ function ConstituentPickList({
           const detailRows = entriesForConstituentDetail(loadedDetail)
           const loadingThis = detailLoadingId === id
           const err = detailErrorById[id]
+          const hkufRows = hkufByLookupId[id]
+          const hkufErr = hkufErrorById[id]
+          const hkufLoadingThis = hkufLoadingId === id
+          const educationRows = educationByLookupId[id]
+          const educationErr = educationErrorById[id]
+          const educationLoadingThis = educationLoadingId === id
+          const cidForExtras =
+            loadedDetail != null
+              ? constituentInternalIdFromDetail(loadedDetail)
+              : null
           return (
             <li key={id} className="constituent-lookup-match-block">
               <div className="constituent-lookup-match-top">
@@ -1210,27 +1316,191 @@ function ConstituentPickList({
                     <p className="feedback error" role="alert">
                       {err}
                     </p>
-                  ) : detailRows.length > 0 ? (
-                    <dl className="constituent-detail-dl">
-                      {detailRows.map(({ key, label: dl, value }) => (
-                        <div key={key} className="constituent-detail-row">
-                          <dt>{dl}</dt>
-                          <dd>{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
                   ) : (
-                    <p className="constituent-detail-empty activity-muted">
-                      No detail fields returned. Deploy{' '}
-                      <code className="activity-code-inline">
-                        get_constituent_detail
-                      </code>{' '}
-                      in Supabase (see{' '}
-                      <code className="activity-code-inline">
-                        002_get_constituent_detail.sql
-                      </code>
-                      ) or check permissions.
-                    </p>
+                    <>
+                      {detailRows.length > 0 ? (
+                        <dl className="constituent-detail-dl">
+                          {detailRows.map(({ key, label: dl, value }) => (
+                            <div key={key} className="constituent-detail-row">
+                              <dt>{dl}</dt>
+                              <dd>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p className="constituent-detail-empty activity-muted">
+                          No detail fields returned. Deploy{' '}
+                          <code className="activity-code-inline">
+                            get_constituent_detail
+                          </code>{' '}
+                          in Supabase (see{' '}
+                          <code className="activity-code-inline">
+                            002_get_constituent_detail.sql
+                          </code>
+                          ) or check permissions.
+                        </p>
+                      )}
+                      <div
+                        className="constituent-hkuf-section"
+                        aria-label="HKU Foundation membership"
+                      >
+                        <h4 className="constituent-hkuf-heading">
+                          HKU Foundation membership
+                        </h4>
+                        {!cidForExtras ? (
+                          <p className="activity-muted constituent-hkuf-lead">
+                            Cannot load membership without CRM internal ID (CID).
+                          </p>
+                        ) : hkufLoadingThis ? (
+                          <p className="activity-muted constituent-hkuf-lead">
+                            Loading membership…
+                          </p>
+                        ) : hkufErr ? (
+                          <>
+                            <p className="feedback error" role="alert">
+                              {hkufErr}
+                            </p>
+                            <button
+                              type="button"
+                              className="auth-submit secondary constituent-extra-load-btn"
+                              onClick={() => void loadHkufForLookup(id)}
+                            >
+                              Try again
+                            </button>
+                          </>
+                        ) : hkufRows !== undefined ? (
+                          hkufRows.length === 0 ? (
+                            <p className="activity-muted constituent-hkuf-lead">
+                              No active HKU Foundation membership records for this
+                              constituent.
+                            </p>
+                          ) : (
+                            <div className="constituent-hkuf-records">
+                              {hkufRows.map((row, hi) => {
+                                const hkEntries =
+                                  entriesForHkufMembershipRow(row)
+                                return (
+                                  <div
+                                    key={`hkuf-${id}-${hi}`}
+                                    className="constituent-hkuf-record"
+                                  >
+                                    {hkufRows.length > 1 ? (
+                                      <div className="constituent-hkuf-record-label">
+                                        Record {hi + 1}
+                                      </div>
+                                    ) : null}
+                                    {hkEntries.length > 0 ? (
+                                      <dl className="constituent-detail-dl constituent-hkuf-dl">
+                                        {hkEntries.map(
+                                          ({ key, label: hl, value }) => (
+                                            <div
+                                              key={key}
+                                              className="constituent-detail-row"
+                                            >
+                                              <dt>{hl}</dt>
+                                              <dd>{value}</dd>
+                                            </div>
+                                          ),
+                                        )}
+                                      </dl>
+                                    ) : (
+                                      <p className="activity-muted constituent-hkuf-lead">
+                                        No fields returned for this membership
+                                        row.
+                                      </p>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        ) : null}
+                      </div>
+                      <div
+                        className="constituent-hkuf-section constituent-education-section"
+                        aria-label="Education history"
+                      >
+                        <h4 className="constituent-hkuf-heading">
+                          Education history
+                        </h4>
+                        {!cidForExtras ? (
+                          <p className="activity-muted constituent-hkuf-lead">
+                            Cannot load education history without CRM internal ID
+                            (CID).
+                          </p>
+                        ) : educationLoadingThis ? (
+                          <p className="activity-muted constituent-hkuf-lead">
+                            Loading education history…
+                          </p>
+                        ) : educationErr ? (
+                          <>
+                            <p className="feedback error" role="alert">
+                              {educationErr}
+                            </p>
+                            <button
+                              type="button"
+                              className="auth-submit secondary constituent-extra-load-btn"
+                              onClick={() => void loadEducationForLookup(id)}
+                            >
+                              Load Education History
+                            </button>
+                          </>
+                        ) : educationRows !== undefined ? (
+                          educationRows.length === 0 ? (
+                            <p className="activity-muted constituent-hkuf-lead">
+                              No education history records for this constituent.
+                            </p>
+                          ) : (
+                            <div className="constituent-hkuf-records">
+                              {educationRows.map((row, ei) => {
+                                const edEntries =
+                                  entriesForEducationHistoryRow(row)
+                                return (
+                                  <div
+                                    key={`education-${id}-${ei}`}
+                                    className="constituent-hkuf-record"
+                                  >
+                                    {educationRows.length > 1 ? (
+                                      <div className="constituent-hkuf-record-label">
+                                        Record {ei + 1}
+                                      </div>
+                                    ) : null}
+                                    {edEntries.length > 0 ? (
+                                      <dl className="constituent-detail-dl constituent-hkuf-dl">
+                                        {edEntries.map(
+                                          ({ key, label: el, value }) => (
+                                            <div
+                                              key={key}
+                                              className="constituent-detail-row"
+                                            >
+                                              <dt>{el}</dt>
+                                              <dd>{value}</dd>
+                                            </div>
+                                          ),
+                                        )}
+                                      </dl>
+                                    ) : (
+                                      <p className="activity-muted constituent-hkuf-lead">
+                                        No fields returned for this education
+                                        row.
+                                      </p>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        ) : (
+                          <button
+                            type="button"
+                            className="auth-submit secondary constituent-extra-load-btn"
+                            onClick={() => void loadEducationForLookup(id)}
+                          >
+                            Load Education History
+                          </button>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
               ) : null}
