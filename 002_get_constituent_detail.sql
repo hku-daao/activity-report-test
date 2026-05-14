@@ -21,6 +21,8 @@ AS $$
       v."BIRTHDATE",
       v."GENDER",
       v."AGE",
+      case when v."DECEASED" = B'1' then 'Y' ELSE 'N' END AS Deceased, 
+      v."DECEASEDDATE" AS Deceased_Date,
       v."CONSTITUENTTYPE" AS Constituent_Type,
 --      string_agg(c."CONSTITUENCY", ', ') AS "CONSTITUENCY"
       string_agg(c."Constituencies\Constituency", ', ') AS "CONSTITUENCY" 
@@ -37,6 +39,8 @@ AS $$
       v."BIRTHDATE",
       v."GENDER",
       v."AGE",
+      case when v."DECEASED" = B'1' then 'Y' ELSE 'N' END, 
+      v."DECEASEDDATE",
       v."CONSTITUENTTYPE"
   ) q
   LIMIT 1;

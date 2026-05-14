@@ -13,6 +13,7 @@ import {
 } from '../lib/staffAccess'
 import { useStaffDashboardState } from '../hooks/useStaffDashboardState'
 import { useSupervisorScope } from '../hooks/useSupervisorScope'
+import { getDashboardPageSize } from '../lib/dashboardPageSize'
 import {
   fetchCreatorDirectoryByFirebaseUids,
   fetchTeamsAlphabetical,
@@ -22,8 +23,11 @@ import {
   type DailyJournalRow,
 } from '../lib/dailyJournals'
 import { AppLogo } from './AppLogo'
+import { DashboardPagination } from './DashboardPagination'
 import { SessionBackButton, SessionUserBeforeLogout } from './SessionNav'
 import { SupervisorScopeControls } from './SupervisorScopeControls'
+
+const DASHBOARD_PAGE_SIZE = getDashboardPageSize()
 
 type Props = {
   user: User
@@ -100,6 +104,7 @@ export function JournalsListPage({ user }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showDeleted, setShowDeleted] = useState(false)
+  const [page, setPage] = useState(1)
   const [nameByUid, setNameByUid] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -153,6 +158,33 @@ export function JournalsListPage({ user }: Props) {
       cancelled = true
     }
   }, [rows])
+
+  const pageCount = useMemo(
+    () => Math.max(1, Math.ceil(rows.length / DASHBOARD_PAGE_SIZE)),
+    [rows.length],
+  )
+
+  const currentPage = Math.min(Math.max(1, page), pageCount)
+
+  useEffect(() => {
+    setPage((p) => Math.min(p, pageCount))
+  }, [pageCount])
+
+  useEffect(() => {
+    setPage(1)
+  }, [
+    showDeleted,
+    scope.includeSubordinates,
+    scope.selectedTeamIds.join(','),
+    scope.selectedStaffIds.join(','),
+    subordinateIdsKey,
+    viewerStaff.id,
+  ])
+
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * DASHBOARD_PAGE_SIZE
+    return rows.slice(start, start + DASHBOARD_PAGE_SIZE)
+  }, [rows, currentPage])
 
   const firebaseAuth = auth
   if (!firebaseAuth) {
@@ -229,33 +261,43 @@ export function JournalsListPage({ user }: Props) {
               to pick a day and start.
             </p>
           ) : (
-            <ul className="activity-report-list">
-              {rows.map((row) => {
-                const deleted = Boolean(row.deleted_at)
-                const ownerLabel =
-                  row.firebase_uid === user.uid
-                    ? 'You'
-                    : nameByUid.get(row.firebase_uid) ?? 'Colleague'
-                return (
-                  <li key={row.id}>
-                    <Link
-                      to={`/journal/${row.id}`}
-                      className={`activity-report-row${deleted ? ' is-deleted' : ''}`}
-                    >
-                      <span className="activity-report-title">
-                        {row.title?.trim() || 'Untitled journal'}
-                      </span>
-                      <span className="activity-report-meta">
-                        Day {row.journal_date} · Updated{' '}
-                        {formatWhen(row.updated_at)}
-                        {' · '}
-                        <span title={row.firebase_uid}>{ownerLabel}</span>
-                      </span>
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
+            <>
+              <ul className="activity-report-list">
+                {pagedRows.map((row) => {
+                  const deleted = Boolean(row.deleted_at)
+                  const ownerLabel =
+                    row.firebase_uid === user.uid
+                      ? 'You'
+                      : nameByUid.get(row.firebase_uid) ?? 'Colleague'
+                  return (
+                    <li key={row.id}>
+                      <Link
+                        to={`/journal/${row.id}`}
+                        className={`activity-report-row${deleted ? ' is-deleted' : ''}`}
+                      >
+                        <span className="activity-report-title">
+                          {row.title?.trim() || 'Untitled journal'}
+                        </span>
+                        <span className="activity-report-meta">
+                          Day {row.journal_date} · Updated{' '}
+                          {formatWhen(row.updated_at)}
+                          {' · '}
+                          <span title={row.firebase_uid}>{ownerLabel}</span>
+                        </span>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+              <DashboardPagination
+                page={currentPage}
+                pageCount={pageCount}
+                totalItems={rows.length}
+                pageSize={DASHBOARD_PAGE_SIZE}
+                onPageChange={setPage}
+                navLabel="Journal list pages"
+              />
+            </>
           )}
         </section>
       </main>

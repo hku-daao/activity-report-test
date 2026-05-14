@@ -13,7 +13,11 @@ import {
 } from '../lib/teamsAndStaff'
 import type { StaffRow, TeamRow } from '../lib/staffAccess'
 import { useSupervisorScope } from '../hooks/useSupervisorScope'
+import { getDashboardPageSize } from '../lib/dashboardPageSize'
+import { DashboardPagination } from './DashboardPagination'
 import { SupervisorScopeControls } from './SupervisorScopeControls'
+
+const DASHBOARD_PAGE_SIZE = getDashboardPageSize()
 
 type Props = {
   user: User
@@ -60,6 +64,7 @@ export function ActivityReportsDashboard({
   const creatorTeamFilterRef = useRef<HTMLDivElement>(null)
   const creatorTeamFilterListId = 'activity-reports-creator-team-filter-list'
   const [showDeleted, setShowDeleted] = useState(false)
+  const [page, setPage] = useState(1)
 
   const scope = useSupervisorScope(user, viewerStaff, subordinates, teams)
   const hasSubordinates = scope.hasSubordinates
@@ -203,6 +208,36 @@ export function ActivityReportsDashboard({
     showDeleted,
     showCreatorTeamFilter,
   ])
+
+  const pageCount = useMemo(
+    () => Math.max(1, Math.ceil(filteredRows.length / DASHBOARD_PAGE_SIZE)),
+    [filteredRows.length],
+  )
+
+  const currentPage = Math.min(Math.max(1, page), pageCount)
+
+  useEffect(() => {
+    setPage((p) => Math.min(p, pageCount))
+  }, [pageCount])
+
+  useEffect(() => {
+    setPage(1)
+  }, [
+    search,
+    showDeleted,
+    creatorTeamFilterIds.join(','),
+    scope.includeSubordinates,
+    scope.selectedTeamIds.join(','),
+    scope.selectedStaffIds.join(','),
+    subordinateIdsKey,
+    viewerStaff.id,
+    rows.length,
+  ])
+
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * DASHBOARD_PAGE_SIZE
+    return filteredRows.slice(start, start + DASHBOARD_PAGE_SIZE)
+  }, [filteredRows, currentPage])
 
   const toggleCreatorTeam = (teamId: string) => {
     const id = String(teamId)
@@ -356,34 +391,44 @@ export function ActivityReportsDashboard({
       ) : filteredRows.length === 0 ? (
         <p className="activity-muted">No activity reports match your filters.</p>
       ) : (
-        <ul className="activity-report-list">
-          {filteredRows.map((row) => {
-            const deleted = isDeleted(row)
-            return (
-              <li key={row.id}>
-                <Link
-                  to={reportHref(row)}
-                  className={`activity-report-row${deleted ? ' is-deleted' : ''}`}
-                >
-                  <span className="activity-report-title">
-                    {row.title?.trim() || 'Untitled activity'}
-                  </span>
-                  <span className="activity-report-meta">
-                    Updated {formatWhen(row.updated_at)}
-                    <span className="activity-report-owner">
-                      {' '}
-                      ·{' '}
-                      {creatorInfoLoaded
-                        ? creatorFullNameByUid.get(row.firebase_uid) ??
-                          'Unknown creator'
-                        : '…'}
+        <>
+          <ul className="activity-report-list">
+            {pagedRows.map((row) => {
+              const deleted = isDeleted(row)
+              return (
+                <li key={row.id}>
+                  <Link
+                    to={reportHref(row)}
+                    className={`activity-report-row${deleted ? ' is-deleted' : ''}`}
+                  >
+                    <span className="activity-report-title">
+                      {row.title?.trim() || 'Untitled activity'}
                     </span>
-                  </span>
-                </Link>
-              </li>
-            )
-          })}
-        </ul>
+                    <span className="activity-report-meta">
+                      Updated {formatWhen(row.updated_at)}
+                      <span className="activity-report-owner">
+                        {' '}
+                        ·{' '}
+                        {creatorInfoLoaded
+                          ? creatorFullNameByUid.get(row.firebase_uid) ??
+                            'Unknown creator'
+                          : '…'}
+                      </span>
+                    </span>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+          <DashboardPagination
+            page={currentPage}
+            pageCount={pageCount}
+            totalItems={filteredRows.length}
+            pageSize={DASHBOARD_PAGE_SIZE}
+            onPageChange={setPage}
+            navLabel="Activity reports list pages"
+          />
+        </>
       )}
     </section>
   )
